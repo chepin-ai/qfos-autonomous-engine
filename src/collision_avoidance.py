@@ -62,10 +62,13 @@ class CollisionAvoidanceSystem:
             action = "NO ACTION REQUIRED"
         
         # Estimate delta-v for avoidance (simplified)
-        dv = hohmann_transfer_delta_v(
-            self.spacecraft.semi_major_axis_au,
-            target.semi_major_axis_au
-        ) if moid < self.MODERATE_THRESHOLD else 0.0
+        if moid < self.MODERATE_THRESHOLD:
+            dv, _ = hohmann_transfer_delta_v(
+                self.spacecraft.semi_major_axis_au,
+                target.semi_major_axis_au
+            )
+        else:
+            dv = 0.0
         
         assessment = HazardAssessment(
             target_name=target.name,

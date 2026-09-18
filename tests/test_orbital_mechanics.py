@@ -81,14 +81,16 @@ class TestHohmannTransfer(unittest.TestCase):
     
     def test_earth_to_mars(self):
         """Earth to Mars transfer should require ~5.5 km/s."""
-        dv = hohmann_transfer_delta_v(1.0, 1.524)
+        dv, dt = hohmann_transfer_delta_v(1.0, 1.524)
         self.assertGreater(dv, 4.0)
         self.assertLess(dv, 7.0)
-        print(f"  [PASS] Earth->Mars dV: {dv:.3f} km/s")
+        self.assertGreater(dt, 100)  # > 100 days
+        self.assertLess(dt, 400)     # < 400 days
+        print(f"  [PASS] Earth->Mars dV: {dv:.3f} km/s, time: {dt:.1f} days")
     
     def test_same_orbit_zero_dv(self):
         """Transfer to same orbit should require ~0 dV."""
-        dv = hohmann_transfer_delta_v(1.0, 1.0)
+        dv, dt = hohmann_transfer_delta_v(1.0, 1.0)
         self.assertAlmostEqual(dv, 0.0, places=3)
         print(f"  [PASS] Same orbit dV: {dv:.6f} km/s")
 

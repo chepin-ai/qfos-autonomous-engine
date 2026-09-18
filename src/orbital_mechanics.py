@@ -101,10 +101,18 @@ class OrbitalBody:
         return x / AU, y / AU, z / AU
 
 
-def hohmann_transfer_delta_v(a1_au: float, a2_au: float) -> float:
-    """Total delta-v for Hohmann transfer between circular orbits (km/s)."""
-    r1 = a1_au * AU
-    r2 = a2_au * AU
+def hohmann_transfer_delta_v(a1, a2) -> tuple:
+    """
+    Total delta-v for Hohmann transfer between circular orbits.
+    Args can be OrbitalBody objects or semi-major axis in AU (float).
+    Returns (delta_v_km_s, transfer_time_days).
+    """
+    if hasattr(a1, 'semi_major_axis_au'):
+        r1 = a1.semi_major_axis_au * AU
+        r2 = a2.semi_major_axis_au * AU
+    else:
+        r1 = a1 * AU
+        r2 = a2 * AU
     a_t = (r1 + r2) / 2.0
     
     v1 = math.sqrt(MU_SUN / r1)
@@ -114,7 +122,13 @@ def hohmann_transfer_delta_v(a1_au: float, a2_au: float) -> float:
     
     dv1 = abs(vt1 - v1)
     dv2 = abs(v2 - vt2)
-    return (dv1 + dv2) / 1000.0
+    dv_total = (dv1 + dv2) / 1000.0
+    
+    # Transfer time (half period of transfer orbit)
+    transfer_period_s = 2 * math.pi * math.sqrt(a_t**3 / MU_SUN)
+    transfer_time_days = transfer_period_s / 2 / 86400.0
+    
+    return dv_total, transfer_time_days
 
 
 def estimate_moid(body1: OrbitalBody, body2: OrbitalBody) -> float:
