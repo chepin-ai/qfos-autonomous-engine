@@ -5,88 +5,145 @@ Unit tests for sensor fusion module.
 import unittest
 import sys
 import os
-import math
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from sensor_fusion import SensorReading, SensorFusionEngine
+from sensor_fusion import KalmanFusion, IMUProcessor, SensorFusion, SensorReading, FusedState
+
+
+class TestKalmanFusion(unittest.TestCase):
+    """Test Kalman filter fusion."""
+    
+    def setUp(self):
+        self.kf = KalmanFusion(state_dim=6)
+    
+    def test_initial_state(self):
+        """Should initialize to zero."""
+        state = self.kf.get_state()
+        self.assertEqual(len(state), 6)
+        self.assertEqual(sum(state), 0.0)
+        print("  [PASS] Init: 6D zero")
+    
+    def test_predict(self):
+        """Should predict state."""
+        self.kf.state = [1.0, 2.0, 3.0, 1.0, 0.0, 0.0]
+        self.kf.predict(dt=1.0)
+        pos = self.kf.get_position()
+        self.assertEqual(pos[0], 2.0)  # 1 + 1*1
+        print(f"  [PASS] Predict: pos={pos}")
+    
+    def test_update(self):
+        """Should update with measurement."""
+        reading = SensorReading(
+            sensor_id="gps",
+            timestamp=0.0,
+            values=[5.0, 5.0, 5.0],
+            covariance=[[1.0, 0, 0], [0, 1.0, 0], [0, 0, 1.0]]
+        )
+        H = [[1, 0, 0, 0, 0, 0],
+             [0, 1, 0, 0, 0, 0],
+             [0, 0, 1, 0, 0, 0]]
+        self.kf.update(reading, H)
+        pos = self.kf.get_position()
+        self.assertNotEqual(sum(pos), 0.0)
+        print(f"  [PASS] Update: pos={pos}")
+    
+    def test_get_position(self):
+        """Should get position."""
+        self.kf.state = [10.0, 20.0, 30.0, 0, 0, 0]
+        pos = self.kf.get_position()
+        self.assertEqual(pos, [10.0, 20.0, 30.0])
+        print(f"  [PASS] Position: {pos}")
+    
+    def test_get_velocity(self):
+        """Should get velocity."""
+        self.kf.state = [0, 0, 0, 5.0, 10.0, 15.0]
+        vel = self.kf.get_velocity()
+        self.assertEqual(vel, [5.0, 10.0, 15.0])
+        print(f"  [PASS] Velocity: {vel}")
+
+
+class TestIMUProcessor(unittest.TestCase):
+    """Test IMU processor."""
+    
+    def setUp(self):
+        self.imu = IMUProcessor()
+    
+    def test_process_accel(self):
+        """Should calibrate acceleration."""
+        raw = [9.81, 0.0, 0.0]
+        calibrated = self.imu.process_accel(raw)
+        self.assertEqual(calibrated, raw)  # No bias yet
+        print(f"  [PASS] Accel: {calibrated}")
+    
+    def test_process_gyro(self):
+        """Should calibrate gyroscope."""
+        raw = [0.1, 0.2, 0.3]
+        calibrated = self.imu.process_gyro(raw)
+        self.assertEqual(calibrated, raw)
+        print(f"  [PASS] Gyro: {calibrated}")
+    
+    def test_integrate_velocity(self):
+        """Should integrate to velocity."""
+        accel = [1.0, 0.0, 0.0]
+        current = [0.0, 0.0, 0.0]
+        vel = self.imu.integrate_velocity(accel, 2.0, current)
+        self.assertEqual(vel[0], 2.0)
+        print(f"  [PASS] Integrate: {vel}")
+    
+    def test_calibrate_bias(self):
+        """Should calibrate biases."""
+        samples = [[0.0, 0.0, 9.8], [0.0, 0.0, 9.9]]
+        self.imu.calibrate_bias(samples, [])
+        self.assertAlmostEqual(self.imu.accel_bias[2], 9.85, places=5)
+        print(f"  [PASS] Bias: {self.imu.accel_bias[2]:.2f}")
 
 
 class TestSensorFusion(unittest.TestCase):
-    """Test sensor fusion engine."""
+    """Test unified sensor fusion."""
     
     def setUp(self):
-        self.engine = SensorFusionEngine()
+        self.sf = SensorFusion(state_dim=6)
     
-    def test_single_sensor_fusion(self):
-        """Should return reading when only one sensor."""
-        r = SensorReading(
-            sensor_type='radar',
-            position_m=(1e6, 2e6, 3e6),
-            velocity_ms=(100, 200, 300),
+    def test_fuse_gps(self):
+        """Should fuse GPS reading."""
+        reading = SensorReading(
+            sensor_id="gps",
             timestamp=0.0,
-            uncertainty_m=100.0,
-            confidence=0.9
+            values=[100.0, 200.0, 300.0],
+            covariance=[[10.0, 0, 0], [0, 10.0, 0], [0, 0, 10.0]]
         )
-        self.engine.add_reading(r)
-        fused = self.engine.fuse()
-        
-        self.assertIsNotNone(fused)
-        self.assertEqual(fused.sensor_count, 1)
-        self.assertAlmostEqual(fused.position_m[0], 1e6)
-        print(f"  [PASS] Single sensor fused: pos=({fused.position_m[0]:.0e}, ...)")
+        self.sf.fuse_gps(reading, dt=1.0)
+        pos = self.sf.kalman.get_position()
+        self.assertNotEqual(sum(pos), 0.0)
+        print(f"  [PASS] GPS fuse: {pos}")
     
-    def test_multi_sensor_fusion(self):
-        """Should average multiple sensor readings."""
-        r1 = SensorReading('radar', (1e6, 0, 0), (100, 0, 0), 0.0, 100.0, 0.9)
-        r2 = SensorReading('lidar', (1.01e6, 0, 0), (102, 0, 0), 0.0, 50.0, 0.95)
-        r3 = SensorReading('optical', (0.99e6, 0, 0), (98, 0, 0), 0.0, 200.0, 0.8)
-        
-        for r in [r1, r2, r3]:
-            self.engine.add_reading(r)
-        
-        fused = self.engine.fuse()
-        self.assertIsNotNone(fused)
-        self.assertEqual(fused.sensor_count, 3)
-        # Should be close to weighted average (lidar has highest weight)
-        self.assertGreater(fused.position_m[0], 0.99e6)
-        self.assertLess(fused.position_m[0], 1.01e6)
-        print(f"  [PASS] 3-sensor fusion: pos={fused.position_m[0]:.0f} m, unc={fused.position_uncertainty_m:.1f} m")
+    def test_fuse_imu(self):
+        """Should fuse IMU reading."""
+        self.sf.fuse_imu([0.0, 0.0, 9.8], [0.0, 0.0, 0.0], dt=1.0)
+        vel = self.sf.kalman.get_velocity()
+        self.assertIsNotNone(vel)
+        print(f"  [PASS] IMU fuse: {vel}")
     
-    def test_anomaly_detection(self):
-        """Should detect anomalous reading."""
-        r1 = SensorReading('radar', (1e6, 0, 0), (100, 0, 0), 0.0, 100.0, 0.9)
-        r2 = SensorReading('radar', (1.001e6, 0, 0), (101, 0, 0), 0.0, 100.0, 0.9)
-        r_bad = SensorReading('radar', (2e6, 0, 0), (500, 0, 0), 0.0, 100.0, 0.3)
-        
-        for r in [r1, r2]:
-            self.engine.add_reading(r)
-        fused = self.engine.fuse()
-        
-        is_anomaly = self.engine.detect_anomaly(r_bad, fused, threshold_sigma=3.0)
-        self.assertTrue(is_anomaly)
-        print(f"  [PASS] Anomaly detected for outlier at {r_bad.position_m[0]:.0e} m")
+    def test_get_fused_state(self):
+        """Should get fused state."""
+        reading = SensorReading(
+            sensor_id="gps",
+            timestamp=0.0,
+            values=[10.0, 20.0, 30.0],
+            covariance=[[1.0, 0, 0], [0, 1.0, 0], [0, 0, 1.0]]
+        )
+        self.sf.fuse_gps(reading, dt=1.0)
+        state = self.sf.get_fused_state()
+        self.assertIsInstance(state, FusedState)
+        self.assertEqual(len(state.position), 3)
+        print(f"  [PASS] State: pos={state.position}")
     
-    def test_sensor_health(self):
-        """Should report sensor health status."""
-        r1 = SensorReading('radar', (1e6, 0, 0), (100, 0, 0), 0.0, 100.0, 0.9)
-        r2 = SensorReading('star_tracker', (1e6, 0, 0), (100, 0, 0), 0.0, 10.0, 0.98)
-        
-        for r in [r1, r2]:
-            self.engine.add_reading(r)
-        
-        health = self.engine.get_sensor_health()
-        self.assertIn('radar', health)
-        self.assertIn('star_tracker', health)
-        self.assertEqual(health['radar']['status'], 'HEALTHY')
-        self.assertEqual(health['star_tracker']['status'], 'HEALTHY')
-        print(f"  [PASS] Sensor health: {len(health)} types, radar={health['radar']['avg_confidence']}")
-    
-    def test_empty_fusion(self):
-        """Should return None with no readings."""
-        fused = self.engine.fuse()
-        self.assertIsNone(fused)
-        print("  [PASS] Empty fusion returns None")
+    def test_summary(self):
+        """Should provide summary."""
+        summary = self.sf.fusion_summary()
+        self.assertEqual(summary["state_dim"], 6)
+        print(f"  [PASS] Summary: {summary['state_dim']}D")
 
 
 if __name__ == '__main__':
