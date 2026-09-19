@@ -6,7 +6,10 @@ Fetches real asteroid orbital elements from the Small-Body Database API.
 import requests
 import json
 from typing import Dict, Optional, List
-from .orbital_mechanics import OrbitalBody
+try:
+    from .orbital_mechanics import OrbitalBody
+except ImportError:
+    from orbital_mechanics import OrbitalBody
 
 SBDB_API_URL = "https://ssd-api.jpl.nasa.gov/sbdb.api"
 
