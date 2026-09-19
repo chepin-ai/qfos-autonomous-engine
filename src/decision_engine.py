@@ -1,284 +1,283 @@
 """
-Autonomous Decision Engine
-Rule-based and heuristic decision making for spacecraft
-autonomous operations: action selection, priority ranking,
-and mission state management.
+Decision Engine Module
+MDP-based autonomous decision making, policy evaluation,
+and value iteration for spacecraft control.
 """
 
-import math
-from typing import Dict, List, Tuple, Optional, Callable
+from typing import Dict, List, Tuple, Optional, Callable, Any, Set
 from dataclasses import dataclass, field
-from enum import Enum
-
-
-class MissionState(Enum):
-    """Mission execution states."""
-    IDLE = "idle"
-    NOMINAL = "nominal"
-    DEGRADED = "degraded"
-    CRITICAL = "critical"
-    ABORT = "abort"
-    SAFE_MODE = "safe_mode"
-
-
-class ActionPriority(Enum):
-    """Action priority levels."""
-    CRITICAL = 0
-    HIGH = 1
-    MEDIUM = 2
-    LOW = 3
-    DEFERRED = 4
+from collections import defaultdict
 
 
 @dataclass
-class SystemStatus:
-    """Status of a spacecraft system."""
+class State:
+    """A state in the MDP."""
     name: str
-    health_percent: float = 100.0
-    temperature_c: float = 20.0
-    power_w: float = 0.0
-    fault_code: Optional[str] = None
-    operational: bool = True
+    features: Dict[str, float] = field(default_factory=dict)
 
 
 @dataclass
 class Action:
-    """A possible action."""
+    """An action in the MDP."""
     name: str
-    priority: ActionPriority
-    preconditions: List[str] = field(default_factory=list)
-    effects: Dict[str, float] = field(default_factory=dict)
-    estimated_duration_s: float = 60.0
-    resource_cost: Dict[str, float] = field(default_factory=dict)
-    fallback_action: Optional[str] = None
+    cost: float = 0.0
+
+
+@dataclass
+class Transition:
+    """A state transition."""
+    from_state: str
+    action: str
+    to_state: str
+    probability: float
+    reward: float = 0.0
+
+
+class MDP:
+    """
+    Markov Decision Process.
+    """
+    
+    def __init__(self, gamma: float = 0.95):
+        """
+        Args:
+            gamma: Discount factor
+        """
+        self.gamma = gamma
+        self.states: Dict[str, State] = {}
+        self.actions: Dict[str, Action] = {}
+        self.transitions: List[Transition] = []
+        self.transition_map: Dict[Tuple[str, str], List[Tuple[str, float, float]]] = defaultdict(list)
+    
+    def add_state(self, state: State):
+        """Add state."""
+        self.states[state.name] = state
+    
+    def add_action(self, action: Action):
+        """Add action."""
+        self.actions[action.name] = action
+    
+    def add_transition(self, trans: Transition):
+        """Add transition."""
+        self.transitions.append(trans)
+        self.transition_map[(trans.from_state, trans.action)].append(
+            (trans.to_state, trans.probability, trans.reward)
+        )
+    
+    def get_transitions(self, state: str, action: str) -> List[Tuple[str, float, float]]:
+        """Get transitions for state-action pair."""
+        return self.transition_map.get((state, action), [])
+    
+    def get_available_actions(self, state: str) -> List[str]:
+        """Get available actions at state."""
+        actions = []
+        for (s, a) in self.transition_map:
+            if s == state and a not in actions:
+                actions.append(a)
+        return actions
+
+
+class ValueIteration:
+    """
+    Value iteration for MDP.
+    """
+    
+    def __init__(self, mdp: MDP, theta: float = 1e-6):
+        """
+        Args:
+            mdp: MDP to solve
+            theta: Convergence threshold
+        """
+        self.mdp = mdp
+        self.theta = theta
+        self.values: Dict[str, float] = {}
+        self.policy: Dict[str, str] = {}
+    
+    def solve(self, max_iterations: int = 1000) -> Dict[str, float]:
+        """
+        Run value iteration.
+        
+        Args:
+            max_iterations: Maximum iterations
+        
+        Returns:
+            Value function
+        """
+        # Initialize values
+        for s in self.mdp.states:
+            self.values[s] = 0.0
+        
+        for _ in range(max_iterations):
+            delta = 0.0
+            
+            for s in self.mdp.states:
+                v = self.values[s]
+                actions = self.mdp.get_available_actions(s)
+                
+                if not actions:
+                    continue
+                
+                # Compute best action value
+                best_value = float('-inf')
+                for a in actions:
+                    action_value = 0.0
+                    for s_next, prob, reward in self.mdp.get_transitions(s, a):
+                        action_value += prob * (reward + self.mdp.gamma * self.values.get(s_next, 0.0))
+                    best_value = max(best_value, action_value)
+                
+                self.values[s] = best_value
+                delta = max(delta, abs(v - best_value))
+            
+            if delta < self.theta:
+                break
+        
+        # Extract policy
+        for s in self.mdp.states:
+            actions = self.mdp.get_available_actions(s)
+            if actions:
+                best_action = None
+                best_value = float('-inf')
+                for a in actions:
+                    action_value = 0.0
+                    for s_next, prob, reward in self.mdp.get_transitions(s, a):
+                        action_value += prob * (reward + self.mdp.gamma * self.values.get(s_next, 0.0))
+                    if action_value > best_value:
+                        best_value = action_value
+                        best_action = a
+                self.policy[s] = best_action
+        
+        return self.values
+    
+    def get_policy(self) -> Dict[str, str]:
+        """Get computed policy."""
+        return self.policy.copy()
+    
+    def evaluate_state(self, state: str) -> float:
+        """Evaluate state value."""
+        return self.values.get(state, 0.0)
+
+
+class PolicyEvaluator:
+    """
+    Evaluate a policy's expected return.
+    """
+    
+    def __init__(self, mdp: MDP):
+        """
+        Args:
+            mdp: MDP
+        """
+        self.mdp = mdp
+    
+    def evaluate(self, policy: Dict[str, str],
+                max_iterations: int = 1000,
+                theta: float = 1e-6) -> Dict[str, float]:
+        """
+        Evaluate policy.
+        
+        Args:
+            policy: State -> action mapping
+            max_iterations: Maximum iterations
+            theta: Convergence threshold
+        
+        Returns:
+            Value function
+        """
+        values = {s: 0.0 for s in self.mdp.states}
+        
+        for _ in range(max_iterations):
+            delta = 0.0
+            
+            for s in self.mdp.states:
+                v = values[s]
+                a = policy.get(s)
+                
+                if a is None:
+                    continue
+                
+                new_value = 0.0
+                for s_next, prob, reward in self.mdp.get_transitions(s, a):
+                    new_value += prob * (reward + self.mdp.gamma * values.get(s_next, 0.0))
+                
+                values[s] = new_value
+                delta = max(delta, abs(v - new_value))
+            
+            if delta < theta:
+                break
+        
+        return values
 
 
 class DecisionEngine:
     """
-    Autonomous decision engine for spacecraft operations.
-    
-    Rule-based action selection with priority ranking,
-    precondition checking, and mission state management.
+    Unified autonomous decision engine.
     """
     
     def __init__(self):
-        self.state = MissionState.NOMINAL
-        self.systems: Dict[str, SystemStatus] = {}
-        self.actions: Dict[str, Action] = {}
-        self.rules: List[Callable] = []
-        self.decision_log: List[Dict] = []
-        self.current_plan: List[str] = []
+        self.mdp = MDP()
+        self.value_iteration: Optional[ValueIteration] = None
+        self.evaluator = PolicyEvaluator(self.mdp)
     
-    def add_system(self, status: SystemStatus):
-        """Add a system to monitor."""
-        self.systems[status.name] = status
-    
-    def add_action(self, action: Action):
-        """Add an available action."""
-        self.actions[action.name] = action
-    
-    def update_system(self, name: str, **kwargs):
-        """Update system status."""
-        if name in self.systems:
-            for key, value in kwargs.items():
-                if hasattr(self.systems[name], key):
-                    setattr(self.systems[name], key, value)
-        
-        self._assess_mission_state()
-    
-    def _assess_mission_state(self):
-        """Assess overall mission state from systems."""
-        critical_count = 0
-        degraded_count = 0
-        
-        for sys in self.systems.values():
-            if sys.health_percent < 30.0 or not sys.operational:
-                critical_count += 1
-            elif sys.health_percent < 70.0:
-                degraded_count += 1
-        
-        if critical_count >= 2:
-            self.state = MissionState.ABORT
-        elif critical_count == 1:
-            self.state = MissionState.CRITICAL
-        elif degraded_count >= 2:
-            self.state = MissionState.DEGRADED
-        elif critical_count == 0 and degraded_count == 0:
-            self.state = MissionState.NOMINAL
-    
-    def check_preconditions(self, action: Action) -> Tuple[bool, List[str]]:
+    def define_mdp(self, states: List[State], actions: List[Action],
+                  transitions: List[Transition]):
         """
-        Check if action preconditions are met.
+        Define the decision MDP.
         
         Args:
-            action: Action to check
+            states: States
+            actions: Actions
+            transitions: Transitions
+        """
+        for s in states:
+            self.mdp.add_state(s)
+        for a in actions:
+            self.mdp.add_action(a)
+        for t in transitions:
+            self.mdp.add_transition(t)
+    
+    def compute_optimal_policy(self) -> Dict[str, str]:
+        """
+        Compute optimal policy via value iteration.
         
         Returns:
-            (met, missing_preconditions)
+            Policy
         """
-        missing = []
-        
-        for precond in action.preconditions:
-            # Parse precondition: "system:health>50" or "state:nominal"
-            if ":" in precond:
-                target, condition = precond.split(":", 1)
-                
-                if target in self.systems:
-                    sys = self.systems[target]
-                    if ">" in condition:
-                        attr, val = condition.split(">")
-                        attr = attr.strip()
-                        val = float(val.strip())
-                        actual = getattr(sys, attr, 0.0)
-                        if actual <= val:
-                            missing.append(precond)
-                    elif "==" in condition:
-                        attr, val = condition.split("==")
-                        actual = getattr(sys, attr.strip(), None)
-                        if str(actual) != val.strip():
-                            missing.append(precond)
-                elif target == "state":
-                    if self.state.value != condition.strip():
-                        missing.append(precond)
-                else:
-                    missing.append(precond)
-        
-        return len(missing) == 0, missing
+        self.value_iteration = ValueIteration(self.mdp)
+        self.value_iteration.solve()
+        return self.value_iteration.get_policy()
     
-    def score_action(self, action: Action, context: Optional[Dict] = None) -> float:
+    def decide(self, state: str) -> Optional[str]:
         """
-        Score an action for current context.
+        Make decision at state.
         
         Args:
-            action: Action to score
-            context: Current mission context
+            state: Current state
         
         Returns:
-            Score (higher is better)
+            Best action
         """
-        base_score = 100.0 - action.priority.value * 20.0
+        if self.value_iteration is None:
+            self.compute_optimal_policy()
         
-        # Penalize resource cost
-        resource_penalty = sum(action.resource_cost.values()) * 5.0
-        
-        # Penalize long duration
-        duration_penalty = action.estimated_duration_s / 3600.0 * 10.0
-        
-        # Context bonus
-        context_bonus = 0.0
-        if context:
-            for effect, value in action.effects.items():
-                if effect in context and context[effect] < value:
-                    context_bonus += 20.0
-        
-        score = base_score - resource_penalty - duration_penalty + context_bonus
-        
-        return round(max(0.0, score), 2)
+        return self.value_iteration.get_policy().get(state)
     
-    def select_action(self, available: Optional[List[str]] = None,
-                      context: Optional[Dict] = None) -> Optional[Action]:
+    def evaluate_policy(self, policy: Dict[str, str]) -> Dict[str, float]:
         """
-        Select best action from available options.
+        Evaluate a policy.
         
         Args:
-            available: List of action names (default: all)
-            context: Mission context
+            policy: Policy to evaluate
         
         Returns:
-            Best action or None
+            Value function
         """
-        candidates = []
-        action_names = available or list(self.actions.keys())
-        
-        for name in action_names:
-            if name not in self.actions:
-                continue
-            
-            action = self.actions[name]
-            precond_met, missing = self.check_preconditions(action)
-            
-            if precond_met:
-                score = self.score_action(action, context)
-                candidates.append((score, action))
-        
-        if not candidates:
-            return None
-        
-        candidates.sort(key=lambda x: x[0], reverse=True)
-        return candidates[0][1]
+        return self.evaluator.evaluate(policy)
     
-    def generate_plan(self, goals: List[str],
-                      context: Optional[Dict] = None) -> List[str]:
-        """
-        Generate action plan to achieve goals.
-        
-        Simple greedy plan generation.
-        
-        Args:
-            goals: Goal states to achieve
-            context: Mission context
-        
-        Returns:
-            Ordered list of action names
-        """
-        plan = []
-        remaining = set(self.actions.keys())
-        
-        for _ in range(len(self.actions)):
-            action = self.select_action(list(remaining), context)
-            if action is None:
-                break
-            
-            plan.append(action.name)
-            remaining.discard(action.name)
-            
-            # Update context with action effects
-            if context is not None:
-                for effect, value in action.effects.items():
-                    context[effect] = max(context.get(effect, 0.0), value)
-        
-        self.current_plan = plan
-        return plan
-    
-    def execute_action(self, action_name: str) -> Dict:
-        """
-        Execute an action and log decision.
-        """
-        if action_name not in self.actions:
-            return {"success": False, "error": "Unknown action"}
-        
-        action = self.actions[action_name]
-        precond_met, missing = self.check_preconditions(action)
-        
-        result = {
-            "action": action_name,
-            "preconditions_met": precond_met,
-            "missing_preconditions": missing,
-            "state": self.state.value,
-            "success": precond_met
-        }
-        
-        if precond_met:
-            # Apply effects
-            for effect, value in action.effects.items():
-                if effect in self.systems:
-                    sys = self.systems[effect]
-                    if "health" in effect.lower():
-                        sys.health_percent = min(100.0, sys.health_percent + value)
-                    elif "power" in effect.lower():
-                        sys.power_w += value
-        
-        self.decision_log.append(result)
-        return result
-    
-    def mission_summary(self) -> Dict:
-        """Get mission decision summary."""
+    def engine_summary(self) -> Dict:
+        """Get engine summary."""
         return {
-            "state": self.state.value,
-            "systems_monitored": len(self.systems),
-            "actions_available": len(self.actions),
-            "decisions_made": len(self.decision_log),
-            "current_plan_length": len(self.current_plan),
-            "system_healths": {name: round(s.health_percent, 1)
-                              for name, s in self.systems.items()}
+            "states": len(self.mdp.states),
+            "actions": len(self.mdp.actions),
+            "transitions": len(self.mdp.transitions),
+            "policy_computed": self.value_iteration is not None
         }
