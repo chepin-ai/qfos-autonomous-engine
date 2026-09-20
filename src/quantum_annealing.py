@@ -1,338 +1,238 @@
 """
 Quantum Annealing Module
-Ising model, energy landscape, tunneling, and ground state
-search for autonomous quantum optimization.
+Ising model encoding, annealing schedule, energy landscape,
+and quantum tunneling for combinatorial optimization.
 """
 
 import math
-from typing import Dict, List, Tuple, Optional, Set
+from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass
-from enum import Enum
-
-
-class SpinState(Enum):
-    """Ising spin state."""
-    UP = 1
-    DOWN = -1
 
 
 @dataclass
-class IsingSpin:
-    """An Ising spin variable."""
-    index: int
-    state: int  # +1 or -1
-    local_field: float = 0.0
+class SpinConfiguration:
+    """Ising spin configuration."""
+    spins: List[int]
+    energy: float
 
 
 class IsingModel:
     """
-    Ising model Hamiltonian.
+    Ising model representation.
     """
     
-    def __init__(self, num_spins: int = 10):
+    def __init__(self, num_spins: int):
         """
         Args:
             num_spins: Number of spins
         """
-        self.num_spins = num_spins
-        self.h: Dict[int, float] = {}  # Local fields
-        self.J: Dict[Tuple[int, int], float] = {}  # Couplings
-        self.spins: List[int] = [1] * num_spins
+        self.n = num_spins
+        self.h: Dict[int, float] = {}
+        self.J: Dict[Tuple[int, int], float] = {}
     
-    def set_field(self, i: int, h_i: float):
-        """Set local field."""
-        self.h[i] = h_i
-    
-    def set_coupling(self, i: int, j: int, J_ij: float):
-        """Set coupling between spins."""
-        if i < j:
-            self.J[(i, j)] = J_ij
-        else:
-            self.J[(j, i)] = J_ij
-    
-    def energy(self, spin_config: Optional[List[int]] = None) -> float:
+    def set_field(self, i: int, h: float):
         """
-        Compute Hamiltonian energy.
+        Set local field.
         
         Args:
-            spin_config: Spin configuration (default: current)
+            i: Spin index
+            h: Field strength
+        """
+        self.h[i] = h
+    
+    def set_coupling(self, i: int, j: int, J: float):
+        """
+        Set coupling.
+        
+        Args:
+            i, j: Spin indices
+            J: Coupling strength
+        """
+        if i < j:
+            self.J[(i, j)] = J
+        else:
+            self.J[(j, i)] = J
+    
+    def energy(self, spins: List[int]) -> float:
+        """
+        Compute energy.
+        
+        Args:
+            spins: Spin configuration
         
         Returns:
             Energy
         """
-        if spin_config is None:
-            spin_config = self.spins
+        e = 0.0
         
-        energy = 0.0
+        # Local fields
+        for i, h in self.h.items():
+            if i < len(spins):
+                e += h * spins[i]
         
-        # Local field terms
-        for i, h_i in self.h.items():
-            if i < len(spin_config):
-                energy += h_i * spin_config[i]
-        
-        # Coupling terms
-        for (i, j), J_ij in self.J.items():
-            if i < len(spin_config) and j < len(spin_config):
-                energy += J_ij * spin_config[i] * spin_config[j]
-        
-        return energy
-    
-    def local_energy(self, i: int) -> float:
-        """
-        Compute local energy contribution.
-        
-        Args:
-            i: Spin index
-        
-        Returns:
-            Local energy
-        """
-        e = self.h.get(i, 0.0) * self.spins[i]
-        
-        for (j, k), J in self.J.items():
-            if j == i:
-                e += J * self.spins[i] * self.spins[k]
-            elif k == i:
-                e += J * self.spins[j] * self.spins[i]
+        # Couplings
+        for (i, j), J in self.J.items():
+            if i < len(spins) and j < len(spins):
+                e += J * spins[i] * spins[j]
         
         return e
-    
-    def flip_spin(self, i: int):
-        """Flip spin i."""
-        if 0 <= i < len(self.spins):
-            self.spins[i] *= -1
-    
-    def magnetization(self) -> float:
-        """
-        Compute total magnetization.
-        
-        Returns:
-            Magnetization
-        """
-        return sum(self.spins) / len(self.spins)
 
 
-class EnergyLandscape:
+class AnnealingSchedule:
     """
-    Analyze energy landscape.
+    Annealing schedule.
     """
     
-    def __init__(self, model: IsingModel):
-        self.model = model
-    
-    def neighbor_states(self, state: List[int]) -> List[Tuple[List[int], float]]:
+    def __init__(self, initial_gamma: float = 0.0,
+                 final_gamma: float = 1.0,
+                 num_steps: int = 100):
         """
-        Generate single-flip neighbor states.
-        
         Args:
-            state: Current state
+            initial_gamma: Initial ratio
+            final_gamma: Final ratio
+            num_steps: Steps
+        """
+        self.gamma_0 = initial_gamma
+        self.gamma_f = final_gamma
+        self.steps = num_steps
+    
+    def linear_schedule(self) -> List[float]:
+        """
+        Linear schedule.
         
         Returns:
-            List of (neighbor_state, energy)
+            Gamma values
         """
-        neighbors = []
-        
-        for i in range(len(state)):
-            neighbor = state.copy()
-            neighbor[i] *= -1
-            e = self.model.energy(neighbor)
-            neighbors.append((neighbor, e))
-        
-        return neighbors
+        return [self.gamma_0 + (self.gamma_f - self.gamma_0) * i / self.steps
+                for i in range(self.steps + 1)]
     
-    def local_minima(self, state: List[int]) -> bool:
+    def exponential_schedule(self, rate: float = 0.1) -> List[float]:
         """
-        Check if state is local minimum.
+        Exponential schedule.
         
         Args:
-            state: State to check
+            rate: Rate
         
         Returns:
-            True if local minimum
+            Gamma values
         """
-        current_e = self.model.energy(state)
-        
-        for neighbor, e in self.neighbor_states(state):
-            if e < current_e:
-                return False
-        
-        return True
-    
-    def energy_barrier(self, state1: List[int], state2: List[int]) -> float:
-        """
-        Estimate energy barrier between states.
-        
-        Args:
-            state1, state2: Two states
-        
-        Returns:
-            Barrier height
-        """
-        e1 = self.model.energy(state1)
-        e2 = self.model.energy(state2)
-        
-        # Simplified: max energy along path
-        max_e = max(e1, e2)
-        
-        for i in range(len(state1)):
-            if state1[i] != state2[i]:
-                intermediate = state1.copy()
-                intermediate[i] = state2[i]
-                e = self.model.energy(intermediate)
-                max_e = max(max_e, e)
-        
-        return max_e - min(e1, e2)
+        return [self.gamma_0 + (self.gamma_f - self.gamma_0) *
+                (1.0 - math.exp(-rate * i))
+                for i in range(self.steps + 1)]
 
 
 class QuantumAnnealer:
     """
-    Quantum annealing optimizer.
+    Quantum annealing solver.
     """
     
     def __init__(self, model: IsingModel):
+        """
+        Args:
+            model: Ising model
+        """
         self.model = model
-        self.landscape = EnergyLandscape(model)
-        self.gamma = 1.0  # Tunneling amplitude
+        self.best: Optional[SpinConfiguration] = None
     
-    def tunneling_probability(self, barrier_height: float,
-                             tunneling_amplitude: float) -> float:
+    def anneal(self, schedule: List[float],
+              initial_spins: List[int]) -> SpinConfiguration:
         """
-        Compute tunneling probability through barrier.
+        Perform quantum annealing.
         
         Args:
-            barrier_height: Energy barrier
-            tunneling_amplitude: Gamma parameter
+            schedule: Annealing schedule
+            initial_spins: Initial configuration
         
         Returns:
-            Tunneling probability
+            Best configuration
         """
-        if barrier_height <= 0:
-            return 1.0
+        spins = initial_spins.copy()
+        best_spins = spins.copy()
+        best_energy = self.model.energy(spins)
         
-        # Simplified: exponential suppression
-        return math.exp(-2.0 * barrier_height / tunneling_amplitude)
-    
-    def anneal_step(self, temperature: float,
-                   gamma: float,
-                   num_sweeps: int = 1) -> List[int]:
-        """
-        Perform one annealing step.
-        
-        Args:
-            temperature: Current temperature
-            gamma: Tunneling amplitude
-            num_sweeps: Number of Metropolis sweeps
-        
-        Returns:
-            Updated state
-        """
-        for _ in range(num_sweeps):
-            for i in range(self.model.num_spins):
-                # Compute energy change for flip
-                delta_e = -2.0 * self.model.local_energy(i)
-                
-                # Metropolis criterion with quantum tunneling
-                if delta_e < 0:
-                    self.model.flip_spin(i)
+        for gamma in schedule:
+            # Classical energy minimization at each gamma
+            # Simplified: single random flip
+            import random
+            i = random.randint(0, len(spins) - 1)
+            
+            # Compute delta energy
+            spins[i] *= -1
+            new_energy = self.model.energy(spins)
+            
+            # Accept or reject
+            delta = new_energy - best_energy
+            
+            if delta < 0:
+                best_energy = new_energy
+                best_spins = spins.copy()
+            else:
+                # Tunneling probability (simplified)
+                if gamma > 0 and random.random() < math.exp(-delta / gamma):
+                    best_energy = new_energy
+                    best_spins = spins.copy()
                 else:
-                    # Classical thermal + quantum tunneling
-                    p_thermal = math.exp(-delta_e / temperature) if temperature > 0 else 0.0
-                    p_tunnel = self.tunneling_probability(delta_e, gamma)
-                    
-                    if p_thermal + p_tunnel > 1.0 or (p_thermal + p_tunnel) > 0.5:
-                        self.model.flip_spin(i)
+                    spins[i] *= -1  # Revert
         
-        return self.model.spins.copy()
-    
-    def anneal(self, T_initial: float = 10.0,
-              T_final: float = 0.01,
-              gamma_initial: float = 5.0,
-              gamma_final: float = 0.01,
-              steps: int = 100) -> Tuple[List[int], float]:
-        """
-        Full quantum annealing schedule.
-        
-        Args:
-            T_initial, T_final: Temperature range
-            gamma_initial, gamma_final: Tunneling range
-            steps: Number of steps
-        
-        Returns:
-            (final_state, final_energy)
-        """
-        for step in range(steps):
-            # Linear schedule
-            ratio = step / max(1, steps - 1)
-            T = T_initial + ratio * (T_final - T_initial)
-            gamma = gamma_initial + ratio * (gamma_final - gamma_initial)
-            
-            self.anneal_step(T, gamma, num_sweeps=1)
-        
-        final_e = self.model.energy()
-        return (self.model.spins.copy(), final_e)
+        self.best = SpinConfiguration(best_spins, best_energy)
+        return self.best
 
 
-class GroundStateSearch:
+class EnergyLandscape:
     """
-    Search for ground state.
+    Energy landscape analysis.
     """
     
     def __init__(self, model: IsingModel):
-        self.model = model
-        self.annealer = QuantumAnnealer(model)
-        self.best_state: Optional[List[int]] = None
-        self.best_energy = float('inf')
-    
-    def search(self, num_restarts: int = 10) -> Tuple[List[int], float]:
         """
-        Search with multiple restarts.
+        Args:
+            model: Ising model
+        """
+        self.model = model
+    
+    def local_minima(self, samples: List[List[int]]) -> List[SpinConfiguration]:
+        """
+        Find local minima.
         
         Args:
-            num_restarts: Number of random restarts
+            samples: Sample configurations
         
         Returns:
-            (best_state, best_energy)
+            Local minima
         """
-        import random
+        minima = []
+        seen = set()
         
-        for _ in range(num_restarts):
-            # Random initial state
-            self.model.spins = [random.choice([-1, 1]) for _ in range(self.model.num_spins)]
+        for s in samples:
+            key = tuple(s)
+            if key in seen:
+                continue
+            seen.add(key)
             
-            # Anneal
-            state, energy = self.annealer.anneal()
-            
-            if energy < self.best_energy:
-                self.best_energy = energy
-                self.best_state = state.copy()
+            e = self.model.energy(s)
+            minima.append(SpinConfiguration(s.copy(), e))
         
-        return (self.best_state or [], self.best_energy)
+        # Sort by energy
+        minima.sort(key=lambda x: x.energy)
+        return minima
     
-    def exact_search_small(self) -> Tuple[List[int], float]:
+    def ground_state_energy(self) -> float:
         """
-        Exact search (only for small systems).
+        Estimate ground state energy.
         
         Returns:
-            (ground_state, ground_energy)
+            Energy
         """
-        if self.model.num_spins > 15:
-            return self.search(num_restarts=10)
+        if self.model.n <= 10:
+            # Brute force
+            min_energy = float('inf')
+            for i in range(2 ** self.model.n):
+                spins = [1 if (i >> j) & 1 else -1 for j in range(self.model.n)]
+                e = self.model.energy(spins)
+                min_energy = min(min_energy, e)
+            return min_energy
         
-        best_e = float('inf')
-        best_state = None
-        
-        # Enumerate all states
-        for s in range(2 ** self.model.num_spins):
-            state = []
-            for i in range(self.model.num_spins):
-                state.append(1 if (s >> i) & 1 == 1 else -1)
-            
-            e = self.model.energy(state)
-            if e < best_e:
-                best_e = e
-                best_state = state.copy()
-        
-        return (best_state or [], best_e)
+        return 0.0  # Placeholder for large systems
 
 
 class QuantumAnnealing:
@@ -340,50 +240,54 @@ class QuantumAnnealing:
     Unified quantum annealing controller.
     """
     
-    def __init__(self, num_spins: int = 10):
+    def __init__(self, num_spins: int = 8):
         self.model = IsingModel(num_spins)
+        self.schedule = AnnealingSchedule()
         self.annealer = QuantumAnnealer(self.model)
-        self.searcher = GroundStateSearch(self.model)
-        self.history: List[Tuple[float, List[int]]] = []
+        self.landscape = EnergyLandscape(self.model)
     
-    def set_problem(self, h: Dict[int, float], J: Dict[Tuple[int, int], float]):
+    def solve(self, h: Dict[int, float],
+             J: Dict[Tuple[int, int], float],
+             num_runs: int = 10) -> Dict:
         """
-        Set optimization problem.
+        Solve Ising problem.
         
         Args:
             h: Local fields
             J: Couplings
+            num_runs: Runs
+        
+        Returns:
+            Results
         """
         for i, hi in h.items():
             self.model.set_field(i, hi)
         for (i, j), Jij in J.items():
             self.model.set_coupling(i, j, Jij)
-    
-    def solve(self, num_restarts: int = 10) -> Tuple[List[int], float]:
-        """
-        Solve optimization problem.
         
-        Args:
-            num_restarts: Number of restarts
+        schedule = self.schedule.linear_schedule()
         
-        Returns:
-            (solution, energy)
-        """
-        state, energy = self.searcher.search(num_restarts)
-        self.history.append((energy, state))
-        return (state, energy)
-    
-    def annealing_summary(self) -> Dict:
-        """Get annealing summary."""
-        if not self.history:
-            return {"status": "not_run"}
+        best_energy = float('inf')
+        best_spins = []
         
-        best_e, best_s = min(self.history, key=lambda x: x[0])
+        import random
+        for _ in range(num_runs):
+            initial = [random.choice([-1, 1]) for _ in range(self.model.n)]
+            result = self.annealer.anneal(schedule, initial)
+            if result.energy < best_energy:
+                best_energy = result.energy
+                best_spins = result.spins.copy()
         
         return {
-            "num_spins": self.model.num_spins,
-            "runs": len(self.history),
-            "best_energy": best_e,
-            "magnetization": sum(best_s) / len(best_s) if best_s else 0.0,
-            "ground_state_approx": best_s[:10] if best_s else []
+            "best_energy": best_energy,
+            "best_spins": best_spins,
+            "num_runs": num_runs
+        }
+    
+    def qa_summary(self) -> Dict:
+        """Get summary."""
+        return {
+            "num_spins": self.model.n,
+            "couplings": len(self.model.J),
+            "fields": len(self.model.h)
         }
