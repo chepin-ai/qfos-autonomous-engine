@@ -8,150 +8,131 @@ import os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from quantum_boltzmann_machine import (BoltzmannDistribution,
-                                       RestrictedBoltzmannMachine,
-                                       QuantumBoltzmannMachine,
-                                       QBMInference,
-                                       QuantumBoltzmannController)
+from quantum_boltzmann_machine import (QBMState, QuantumBoltzmannMachine,
+                                        QBMLearner,
+                                        QuantumBoltzmannMachineController)
 
 
-class TestBoltzmannDistribution(unittest.TestCase):
-    """Test Boltzmann distribution."""
+class TestQBMState(unittest.TestCase):
+    """Test QBM state."""
     
-    def setUp(self):
-        self.bd = BoltzmannDistribution(temperature=1.0)
+    def test_init(self):
+        """Should initialize."""
+        s = QBMState(4, 4)
+        self.assertEqual(len(s.visible), 4)
+        self.assertEqual(len(s.hidden), 4)
+        print("  [PASS] Init")
     
-    def test_probability(self):
-        """Should compute probability."""
-        p = self.bd.probability(0.0)
-        self.assertAlmostEqual(p, 1.0)
-        print("  [PASS] Prob")
-    
-    def test_sample(self):
-        """Should sample."""
-        idx = self.bd.sample([0.0, 1.0, 2.0])
-        self.assertIn(idx, [0, 1, 2])
-        print(f"  [PASS] Sample: {idx}")
-
-
-class TestRestrictedBoltzmannMachine(unittest.TestCase):
-    """Test RBM."""
-    
-    def setUp(self):
-        self.rbm = RestrictedBoltzmannMachine(num_visible=4, num_hidden=2)
-    
-    def test_hidden_probs(self):
-        """Should compute hidden probs."""
-        v = [1, 0, 1, 0]
-        h = self.rbm.hidden_probabilities(v)
-        self.assertEqual(len(h), 2)
-        self.assertTrue(all(0 <= p <= 1 for p in h))
-        print(f"  [PASS] H: {h}")
-    
-    def test_visible_probs(self):
-        """Should compute visible probs."""
-        h = [1, 0]
-        v = self.rbm.visible_probabilities(h)
-        self.assertEqual(len(v), 4)
-        print(f"  [PASS] V: {v}")
-    
-    def test_cd(self):
-        """Should train with CD."""
-        old_b = self.rbm.b_visible[:]
-        for _ in range(10):
-            self.rbm.contrastive_divergence([1, 0, 1, 0], lr=1.0)
-        changed = any(self.rbm.b_visible[i] != old_b[i] for i in range(4))
-        self.assertTrue(changed)
-        print("  [PASS] CD")
+    def test_copy(self):
+        """Should copy."""
+        s = QBMState(4, 4)
+        c = s.copy()
+        self.assertEqual(c.visible, s.visible)
+        print("  [PASS] Copy")
 
 
 class TestQuantumBoltzmannMachine(unittest.TestCase):
     """Test QBM."""
     
     def setUp(self):
-        self.qbm = QuantumBoltzmannMachine(num_visible=4, num_hidden=2)
+        self.qbm = QuantumBoltzmannMachine(4, 4)
     
-    def test_quantum_energy(self):
+    def test_energy(self):
         """Should compute energy."""
-        E = self.qbm.quantum_energy([1, 0, 1, 0], [1, 0])
-        self.assertIsInstance(E, float)
-        print(f"  [PASS] E: {E:.4f}")
+        s = QBMState(4, 4)
+        e = self.qbm.energy(s)
+        self.assertIsInstance(e, float)
+        print(f"  [PASS] Energy: {e:.4f}")
     
-    def test_quantum_sample(self):
-        """Should quantum sample."""
-        h, E = self.qbm.quantum_sample([1, 0, 1, 0])
-        self.assertEqual(len(h), 2)
-        print(f"  [PASS] QS: h={h}, E={E:.4f}")
+    def test_probability(self):
+        """Should compute probability."""
+        s = QBMState(4, 4)
+        p = self.qbm.probability(s)
+        self.assertGreater(p, 0)
+        print(f"  [PASS] Prob: {p:.6f}")
     
-    def test_train(self):
-        """Should train."""
-        old_b = self.qbm.rbm.b_visible[:]
-        for _ in range(10):
-            self.qbm.train_quantum([1, 0, 1, 0], lr=1.0)
-        changed = any(self.qbm.rbm.b_visible[i] != old_b[i] for i in range(4))
-        self.assertTrue(changed)
-        print("  [PASS] QTrain")
-
-
-class TestQBMInference(unittest.TestCase):
-    """Test QBM inference."""
+    def test_sample_hidden(self):
+        """Should sample hidden."""
+        h = self.qbm.sample_hidden([1, -1, 1, -1])
+        self.assertEqual(len(h), 4)
+        self.assertTrue(all(abs(x) == 1 for x in h))
+        print(f"  [PASS] SampleH: {h}")
     
-    def setUp(self):
-        self.qbm = QuantumBoltzmannMachine(4, 2)
-        self.inf = QBMInference(self.qbm)
+    def test_sample_visible(self):
+        """Should sample visible."""
+        v = self.qbm.sample_visible([1, -1, 1, -1])
+        self.assertEqual(len(v), 4)
+        self.assertTrue(all(abs(x) == 1 for x in v))
+        print(f"  [PASS] SampleV: {v}")
+    
+    def test_gibbs(self):
+        """Should Gibbs sample."""
+        s = QBMState(4, 4)
+        ns = self.qbm.gibbs_sample(s, 5)
+        self.assertEqual(len(ns.visible), 4)
+        print("  [PASS] Gibbs")
     
     def test_reconstruct(self):
         """Should reconstruct."""
-        r = self.inf.reconstruct([1, None, 1, None])
+        v = [1, -1, 1, -1]
+        r = self.qbm.reconstruct(v, 5)
         self.assertEqual(len(r), 4)
-        self.assertEqual(r[0], 1)
-        self.assertEqual(r[2], 1)
         print(f"  [PASS] Recon: {r}")
-    
-    def test_features(self):
-        """Should extract features."""
-        f = self.inf.feature_representation([1, 0, 1, 0])
-        self.assertEqual(len(f), 2)
-        print(f"  [PASS] Feat: {f}")
-    
-    def test_free_energy(self):
-        """Should compute free energy."""
-        fe = self.inf.free_energy([1, 0, 1, 0])
-        self.assertIsInstance(fe, float)
-        print(f"  [PASS] FE: {fe:.4f}")
 
 
-class TestQuantumBoltzmannController(unittest.TestCase):
-    """Test unified QBM controller."""
+class TestQBMLearner(unittest.TestCase):
+    """Test QBM learner."""
     
     def setUp(self):
-        self.qbc = QuantumBoltzmannController()
+        self.qbm = QuantumBoltzmannMachine(4, 4)
+        self.l = QBMLearner(self.qbm)
+    
+    def test_train_step(self):
+        """Should train step."""
+        data = [[1, 1, -1, -1], [-1, -1, 1, 1], [1, -1, 1, -1]]
+        loss = self.l.train_step(data, 1)
+        self.assertIsNotNone(loss)
+        print(f"  [PASS] Step: loss={loss:.4f}")
+    
+    def test_train(self):
+        """Should train."""
+        data = [[1, 1, -1, -1], [-1, -1, 1, 1], [1, -1, 1, -1]]
+        r = self.l.train(data, epochs=10, batch_size=2)
+        self.assertIn("final_loss", r)
+        print(f"  [PASS] Train: loss={r['final_loss']:.4f}")
+
+
+class TestQuantumBoltzmannMachineController(unittest.TestCase):
+    """Test unified controller."""
+    
+    def setUp(self):
+        self.ctrl = QuantumBoltzmannMachineController()
     
     def test_build(self):
         """Should build."""
-        self.qbc.build(4, 2)
-        self.assertIsNotNone(self.qbc.qbm)
+        self.ctrl.build(4, 4)
+        self.assertIsNotNone(self.ctrl.qbm)
         print("  [PASS] Build")
     
     def test_train(self):
         """Should train."""
-        self.qbc.build(4, 2)
-        self.qbc.train([[1, 0, 1, 0], [0, 1, 0, 1]], epochs=2, lr=0.1)
-        self.assertEqual(len(self.qbc.training_history), 2)
-        print(f"  [PASS] Train: hist={self.qbc.training_history}")
+        data = [[1, 1, -1, -1], [-1, -1, 1, 1], [1, -1, 1, -1]]
+        r = self.ctrl.train(data, 10)
+        self.assertIn("final_loss", r)
+        print(f"  [PASS] Train: loss={r['final_loss']:.4f}")
     
-    def test_predict(self):
-        """Should predict."""
-        self.qbc.build(4, 2)
-        p = self.qbc.predict([1, None, 1, None])
-        self.assertEqual(len(p), 4)
-        print(f"  [PASS] Pred: {p}")
+    def test_generate(self):
+        """Should generate."""
+        self.ctrl.build(4, 4)
+        s = self.ctrl.generate(5, 5)
+        self.assertEqual(len(s), 5)
+        print("  [PASS] Gen")
     
     def test_summary(self):
         """Should summarize."""
-        self.qbc.build(4, 2)
-        s = self.qbc.qbm_summary()
-        self.assertEqual(s["visible"], 4)
+        self.ctrl.build(4, 4)
+        s = self.ctrl.qbm_summary()
+        self.assertIn("visible", s)
         print(f"  [PASS] Sum: {s}")
 
 

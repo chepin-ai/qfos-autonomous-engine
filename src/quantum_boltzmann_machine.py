@@ -1,405 +1,374 @@
 """
 Quantum Boltzmann Machine Module
-Quantum-inspired Boltzmann sampling, visible/hidden unit training,
-and probabilistic inference for autonomous pattern recognition.
+Quantum-stochastic neural network with thermal sampling, energy-based
+learning, and Gibbs sampling for autonomous pattern recognition.
 """
 
 import math
 import random
-from typing import Dict, List, Tuple, Callable, Optional
+from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass
 
 
-class BoltzmannDistribution:
+class QBMState:
     """
-    Boltzmann probability distribution.
-    """
-    
-    def __init__(self, temperature: float = 1.0):
-        """
-        Args:
-            temperature: System temperature
-        """
-        self.T = temperature
-    
-    def probability(self, energy: float) -> float:
-        """
-        Compute Boltzmann probability.
-        
-        Args:
-            energy: State energy
-        
-        Returns:
-            Probability weight
-        """
-        if self.T <= 0:
-            return 1.0 if energy == 0 else 0.0
-        return math.exp(-energy / self.T)
-    
-    def sample(self, energies: List[float]) -> int:
-        """
-        Sample from energy distribution.
-        
-        Args:
-            energies: State energies
-        
-        Returns:
-            Selected state index
-        """
-        weights = [self.probability(E) for E in energies]
-        total = sum(weights)
-        if total <= 0:
-            return random.randint(0, len(energies) - 1)
-        
-        r = random.random() * total
-        cumsum = 0.0
-        for i, w in enumerate(weights):
-            cumsum += w
-            if r <= cumsum:
-                return i
-        return len(energies) - 1
-
-
-class RestrictedBoltzmannMachine:
-    """
-    Restricted Boltzmann Machine (RBM).
+    State of quantum Boltzmann machine.
     """
     
-    def __init__(self, num_visible: int, num_hidden: int):
+    def __init__(self, num_visible: int = 4, num_hidden: int = 4):
         """
         Args:
             num_visible: Visible units
             num_hidden: Hidden units
         """
-        self.nv = num_visible
-        self.nh = num_hidden
-        # Weights: W[i][j] from visible i to hidden j
-        self.W: List[List[float]] = [[random.uniform(-0.1, 0.1)
-                                      for _ in range(num_hidden)]
-                                     for _ in range(num_visible)]
-        self.b_visible: List[float] = [0.0] * num_visible
-        self.b_hidden: List[float] = [0.0] * num_hidden
+        self.v = num_visible
+        self.h = num_hidden
+        # Visible and hidden states (spins: +1 or -1)
+        self.visible = [1 if random.random() > 0.5 else -1 for _ in range(num_visible)]
+        self.hidden = [1 if random.random() > 0.5 else -1 for _ in range(num_hidden)]
     
-    def sigmoid(self, x: float) -> float:
-        """Sigmoid activation."""
-        return 1.0 / (1.0 + math.exp(-x))
-    
-    def hidden_probabilities(self, visible: List[int]) -> List[float]:
-        """
-        Compute hidden unit activation probabilities.
-        
-        Args:
-            visible: Visible unit states
-        
-        Returns:
-            Hidden probabilities
-        """
-        probs = []
-        for j in range(self.nh):
-            activation = self.b_hidden[j]
-            for i in range(self.nv):
-                activation += visible[i] * self.W[i][j]
-            probs.append(self.sigmoid(activation))
-        return probs
-    
-    def visible_probabilities(self, hidden: List[int]) -> List[float]:
-        """
-        Compute visible unit reconstruction probabilities.
-        
-        Args:
-            hidden: Hidden unit states
-        
-        Returns:
-            Visible probabilities
-        """
-        probs = []
-        for i in range(self.nv):
-            activation = self.b_visible[i]
-            for j in range(self.nh):
-                activation += hidden[j] * self.W[i][j]
-            probs.append(self.sigmoid(activation))
-        return probs
-    
-    def sample_hidden(self, visible: List[int]) -> List[int]:
-        """
-        Sample hidden units.
-        
-        Args:
-            visible: Visible states
-        
-        Returns:
-            Sampled hidden states
-        """
-        probs = self.hidden_probabilities(visible)
-        return [1 if random.random() < p else 0 for p in probs]
-    
-    def sample_visible(self, hidden: List[int]) -> List[int]:
-        """
-        Sample visible units.
-        
-        Args:
-            hidden: Hidden states
-        
-        Returns:
-            Sampled visible states
-        """
-        probs = self.visible_probabilities(hidden)
-        return [1 if random.random() < p else 0 for p in probs]
-    
-    def contrastive_divergence(self, data: List[int],
-                              lr: float = 0.1,
-                              k: int = 1):
-        """
-        CD-k training step.
-        
-        Args:
-            data: Training data (visible states)
-            lr: Learning rate
-            k: Gibbs sampling steps
-        """
-        # Positive phase
-        h0_probs = self.hidden_probabilities(data)
-        h0 = [1 if random.random() < p else 0 for p in h0_probs]
-        
-        # Negative phase: k-step Gibbs
-        vk = data[:]
-        hk = h0[:]
-        for _ in range(k):
-            vk_probs = self.visible_probabilities(hk)
-            vk = [1 if random.random() < p else 0 for p in vk_probs]
-            hk_probs = self.hidden_probabilities(vk)
-            hk = [1 if random.random() < p else 0 for p in hk_probs]
-        
-        # Update weights
-        for i in range(self.nv):
-            for j in range(self.nh):
-                self.W[i][j] += lr * (data[i] * h0_probs[j] - vk[i] * hk_probs[j])
-        
-        # Update biases
-        for i in range(self.nv):
-            self.b_visible[i] += lr * (data[i] - vk[i])
-        for j in range(self.nh):
-            self.b_hidden[j] += lr * (h0_probs[j] - hk_probs[j])
+    def copy(self) -> 'QBMState':
+        """Create copy."""
+        s = QBMState(self.v, self.h)
+        s.visible = self.visible[:]
+        s.hidden = self.hidden[:]
+        return s
 
 
 class QuantumBoltzmannMachine:
     """
-    Quantum Boltzmann Machine with transverse field.
+    Quantum Boltzmann machine.
     """
     
-    def __init__(self, num_visible: int, num_hidden: int,
-                 transverse_field: float = 0.1):
+    def __init__(self, num_visible: int = 4, num_hidden: int = 4):
         """
         Args:
             num_visible: Visible units
             num_hidden: Hidden units
-            transverse_field: Transverse field strength (Gamma)
         """
-        self.rbm = RestrictedBoltzmannMachine(num_visible, num_hidden)
-        self.Gamma = transverse_field
-        self.quantum_weights: List[List[float]] = [[w for w in row] for row in self.rbm.W]
+        self.v = num_visible
+        self.h = num_hidden
+        
+        # Weights and biases
+        self.W: List[List[float]] = [[random.uniform(-0.1, 0.1)
+                                       for _ in range(num_hidden)]
+                                      for _ in range(num_visible)]
+        self.b_v: List[float] = [0.0] * num_visible
+        self.b_h: List[float] = [0.0] * num_hidden
+        
+        # Transverse field strength (quantum)
+        self.gamma = 1.0
+        self.temperature = 1.0
     
-    def quantum_energy(self, visible: List[int],
-                      hidden: List[int]) -> float:
+    def energy(self, state: QBMState) -> float:
         """
-        Compute quantum Hamiltonian energy.
+        Compute energy of state.
         
         Args:
-            visible: Visible states
-            hidden: Hidden states
+            state: State
         
         Returns:
             Energy
         """
-        classical = 0.0
-        for i in range(self.rbm.nv):
-            for j in range(self.rbm.nh):
-                classical -= self.quantum_weights[i][j] * visible[i] * hidden[j]
-        for i in range(self.rbm.nv):
-            classical -= self.rbm.b_visible[i] * visible[i]
-        for j in range(self.rbm.nh):
-            classical -= self.rbm.b_hidden[j] * hidden[j]
+        E = 0.0
         
-        # Transverse field term (quantum fluctuations)
-        quantum_term = -self.Gamma * sum(visible) - self.Gamma * sum(hidden)
+        # Visible-hidden interactions
+        for i in range(self.v):
+            for j in range(self.h):
+                E -= self.W[i][j] * state.visible[i] * state.hidden[j]
         
-        return classical + quantum_term
+        # Visible biases
+        for i in range(self.v):
+            E -= self.b_v[i] * state.visible[i]
+        
+        # Hidden biases
+        for j in range(self.h):
+            E -= self.b_h[j] * state.hidden[j]
+        
+        # Transverse field (quantum term)
+        E += self.gamma * sum(abs(s) for s in state.visible)
+        E += self.gamma * sum(abs(s) for s in state.hidden)
+        
+        return E
     
-    def quantum_sample(self, visible: List[int]) -> Tuple[List[int], float]:
+    def probability(self, state: QBMState) -> float:
         """
-        Sample with quantum effects.
+        Boltzmann probability.
         
         Args:
-            visible: Input visible states
+            state: State
         
         Returns:
-            (hidden_states, energy)
+            Probability
         """
-        # First sample classically
-        hidden = self.rbm.sample_hidden(visible)
-        
-        # Apply quantum perturbation
-        for j in range(self.rbm.nh):
-            if random.random() < self.Gamma:
-                hidden[j] = 1 - hidden[j]
-        
-        E = self.quantum_energy(visible, hidden)
-        return hidden, E
+        return math.exp(-self.energy(state) / self.temperature)
     
-    def train_quantum(self, data: List[int], lr: float = 0.1):
+    def sample_hidden(self, visible: List[int]) -> List[int]:
         """
-        Train with quantum CD.
-        
-        Args:
-            data: Training data
-            lr: Learning rate
-        """
-        self.rbm.contrastive_divergence(data, lr, k=1)
-        # Update quantum weights
-        self.quantum_weights = [[w for w in row] for row in self.rbm.W]
-
-
-class QBMInference:
-    """
-    Inference engine for trained QBM.
-    """
-    
-    def __init__(self, qbm: QuantumBoltzmannMachine):
-        """
-        Args:
-            qbm: Trained QBM
-        """
-        self.qbm = qbm
-    
-    def reconstruct(self, partial_visible: List[Optional[int]]) -> List[int]:
-        """
-        Reconstruct missing visible units.
-        
-        Args:
-            partial_visible: Partial visible state (None for missing)
-        
-        Returns:
-            Reconstructed state
-        """
-        # Fill missing with random
-        visible = [v if v is not None else random.choice([0, 1])
-                   for v in partial_visible]
-        
-        # Sample hidden
-        hidden = self.qbm.rbm.sample_hidden(visible)
-        
-        # Reconstruct visible
-        recon_probs = self.qbm.rbm.visible_probabilities(hidden)
-        recon = []
-        for i, v in enumerate(partial_visible):
-            if v is not None:
-                recon.append(v)
-            else:
-                recon.append(1 if random.random() < recon_probs[i] else 0)
-        
-        return recon
-    
-    def feature_representation(self, visible: List[int]) -> List[float]:
-        """
-        Extract hidden features.
-        
-        Args:
-            visible: Input
-        
-        Returns:
-            Hidden probabilities as features
-        """
-        return self.qbm.rbm.hidden_probabilities(visible)
-    
-    def free_energy(self, visible: List[int]) -> float:
-        """
-        Compute free energy.
+        Sample hidden given visible.
         
         Args:
             visible: Visible state
         
         Returns:
-            Free energy
+            Hidden state
         """
-        hidden_probs = self.qbm.rbm.hidden_probabilities(visible)
-        fe = 0.0
-        for i in range(self.qbm.rbm.nv):
-            fe -= self.qbm.rbm.b_visible[i] * visible[i]
-        for j in range(self.qbm.rbm.nh):
-            fe -= math.log(1 + math.exp(hidden_probs[j]))
-        return fe
+        hidden = []
+        for j in range(self.h):
+            activation = self.b_h[j]
+            for i in range(self.v):
+                activation += self.W[i][j] * visible[i]
+            
+            # Sigmoid probability
+            p = 1.0 / (1.0 + math.exp(-2.0 * activation / self.temperature))
+            hidden.append(1 if random.random() < p else -1)
+        
+        return hidden
+    
+    def sample_visible(self, hidden: List[int]) -> List[int]:
+        """
+        Sample visible given hidden.
+        
+        Args:
+            hidden: Hidden state
+        
+        Returns:
+            Visible state
+        """
+        visible = []
+        for i in range(self.v):
+            activation = self.b_v[i]
+            for j in range(self.h):
+                activation += self.W[i][j] * hidden[j]
+            
+            p = 1.0 / (1.0 + math.exp(-2.0 * activation / self.temperature))
+            visible.append(1 if random.random() < p else -1)
+        
+        return visible
+    
+    def gibbs_sample(self, state: QBMState, steps: int = 1) -> QBMState:
+        """
+        Gibbs sampling.
+        
+        Args:
+            state: Initial state
+            steps: Steps
+        
+        Returns:
+            New state
+        """
+        s = state.copy()
+        for _ in range(steps):
+            s.hidden = self.sample_hidden(s.visible)
+            s.visible = self.sample_visible(s.hidden)
+        return s
+    
+    def reconstruct(self, visible: List[int], steps: int = 1) -> List[int]:
+        """
+        Reconstruct visible state.
+        
+        Args:
+            visible: Input
+            steps: Gibbs steps
+        
+        Returns:
+            Reconstructed
+        """
+        state = QBMState(self.v, self.h)
+        state.visible = visible[:]
+        state.hidden = self.sample_hidden(visible)
+        
+        for _ in range(steps):
+            state.visible = self.sample_visible(state.hidden)
+            state.hidden = self.sample_hidden(state.visible)
+        
+        return state.visible
 
 
-class QuantumBoltzmannController:
+class QBMLearner:
+    """
+    QBM training via contrastive divergence.
+    """
+    
+    def __init__(self, qbm: QuantumBoltzmannMachine, lr: float = 0.01):
+        """
+        Args:
+            qbm: QBM
+            lr: Learning rate
+        """
+        self.qbm = qbm
+        self.lr = lr
+        self.loss_history: List[float] = []
+    
+    def train_step(self, data_batch: List[List[int]],
+                  k: int = 1) -> float:
+        """
+        Single CD-k training step.
+        
+        Args:
+            data_batch: Training data
+            k: Gibbs steps
+        
+        Returns:
+            Loss
+        """
+        # Positive phase
+        pos_W = [[0.0] * self.qbm.h for _ in range(self.qbm.v)]
+        pos_bv = [0.0] * self.qbm.v
+        pos_bh = [0.0] * self.qbm.h
+        
+        for visible in data_batch:
+            state = QBMState(self.qbm.v, self.qbm.h)
+            state.visible = visible[:]
+            state.hidden = self.qbm.sample_hidden(visible)
+            
+            for i in range(self.qbm.v):
+                pos_bv[i] += state.visible[i]
+                for j in range(self.qbm.h):
+                    pos_W[i][j] += state.visible[i] * state.hidden[j]
+            for j in range(self.qbm.h):
+                pos_bh[j] += state.hidden[j]
+        
+        # Negative phase
+        neg_W = [[0.0] * self.qbm.h for _ in range(self.qbm.v)]
+        neg_bv = [0.0] * self.qbm.v
+        neg_bh = [0.0] * self.qbm.h
+        
+        for visible in data_batch:
+            state = QBMState(self.qbm.v, self.qbm.h)
+            state.visible = visible[:]
+            state.hidden = self.qbm.sample_hidden(visible)
+            
+            # Gibbs sampling
+            state = self.qbm.gibbs_sample(state, k)
+            
+            for i in range(self.qbm.v):
+                neg_bv[i] += state.visible[i]
+                for j in range(self.qbm.h):
+                    neg_W[i][j] += state.visible[i] * state.hidden[j]
+            for j in range(self.qbm.h):
+                neg_bh[j] += state.hidden[j]
+        
+        n = len(data_batch)
+        if n == 0:
+            return 0.0
+        
+        # Update weights
+        for i in range(self.qbm.v):
+            self.qbm.b_v[i] += self.lr * (pos_bv[i] - neg_bv[i]) / n
+            for j in range(self.qbm.h):
+                self.qbm.W[i][j] += self.lr * (pos_W[i][j] - neg_W[i][j]) / n
+        for j in range(self.qbm.h):
+            self.qbm.b_h[j] += self.lr * (pos_bh[j] - neg_bh[j]) / n
+        
+        # Compute loss (reconstruction error)
+        loss = 0.0
+        for visible in data_batch:
+            recon = self.qbm.reconstruct(visible, k)
+            loss += sum((a - b) ** 2 for a, b in zip(visible, recon)) / len(visible)
+        
+        loss /= n
+        self.loss_history.append(loss)
+        return loss
+    
+    def train(self, data: List[List[int]],
+             epochs: int = 100,
+             batch_size: int = 10,
+             k: int = 1) -> Dict:
+        """
+        Full training.
+        
+        Args:
+            data: Training data
+            epochs: Epochs
+            batch_size: Batch size
+            k: CD steps
+        
+        Returns:
+            Result
+        """
+        for epoch in range(epochs):
+            # Shuffle
+            random.shuffle(data)
+            
+            for i in range(0, len(data), batch_size):
+                batch = data[i:i + batch_size]
+                self.train_step(batch, k)
+        
+        return {
+            "final_loss": self.loss_history[-1] if self.loss_history else 0.0,
+            "epochs": epochs
+        }
+
+
+class QuantumBoltzmannMachineController:
     """
     Unified QBM controller.
     """
     
     def __init__(self):
         self.qbm: Optional[QuantumBoltzmannMachine] = None
-        self.inference: Optional[QBMInference] = None
-        self.training_history: List[float] = []
+        self.learner: Optional[QBMLearner] = None
+        self.results: List[Dict] = []
     
-    def build(self, num_visible: int, num_hidden: int,
-             transverse_field: float = 0.1):
+    def build(self, num_visible: int = 4, num_hidden: int = 4):
         """
         Build QBM.
         
         Args:
             num_visible: Visible units
             num_hidden: Hidden units
-            transverse_field: Transverse field
         """
-        self.qbm = QuantumBoltzmannMachine(num_visible, num_hidden, transverse_field)
-        self.inference = QBMInference(self.qbm)
+        self.qbm = QuantumBoltzmannMachine(num_visible, num_hidden)
+        self.learner = QBMLearner(self.qbm)
     
-    def train(self, dataset: List[List[int]],
-             epochs: int = 10, lr: float = 0.1):
+    def train(self, data: List[List[int]],
+             epochs: int = 50) -> Dict:
         """
-        Train on dataset.
+        Train QBM.
         
         Args:
-            dataset: Training data
-            epochs: Training epochs
-            lr: Learning rate
-        """
-        for epoch in range(epochs):
-            total_error = 0.0
-            for data in dataset:
-                old_visible = data[:]
-                self.qbm.train_quantum(data, lr)
-                # Compute reconstruction error
-                hidden = self.qbm.rbm.sample_hidden(data)
-                recon_probs = self.qbm.rbm.visible_probabilities(hidden)
-                error = sum((data[i] - recon_probs[i])**2 for i in range(len(data)))
-                total_error += error
-            
-            avg_error = total_error / len(dataset) if dataset else 0
-            self.training_history.append(avg_error)
-    
-    def predict(self, input_data: List[Optional[int]]) -> List[int]:
-        """
-        Predict/reconstruct.
-        
-        Args:
-            input_data: Partial input
+            data: Training data
+            epochs: Epochs
         
         Returns:
-            Reconstructed output
+            Result
         """
-        if self.inference is None:
+        if self.learner is None:
+            self.build(len(data[0]) if data else 4)
+        
+        result = self.learner.train(data, epochs=epochs)
+        self.results.append(result)
+        return result
+    
+    def generate(self, num_samples: int = 10,
+                steps: int = 10) -> List[List[int]]:
+        """
+        Generate samples.
+        
+        Args:
+            num_samples: Number
+            steps: Gibbs steps
+        
+        Returns:
+            Samples
+        """
+        if self.qbm is None:
             return []
-        return self.inference.reconstruct(input_data)
+        
+        samples = []
+        for _ in range(num_samples):
+            state = QBMState(self.qbm.v, self.qbm.h)
+            state = self.qbm.gibbs_sample(state, steps)
+            samples.append(state.visible[:])
+        
+        return samples
     
     def qbm_summary(self) -> Dict:
-        """Get QBM summary."""
-        if self.qbm is None:
-            return {"status": "not_built"}
-        
+        """Get summary."""
         return {
-            "visible": self.qbm.rbm.nv,
-            "hidden": self.qbm.rbm.nh,
-            "transverse_field": self.qbm.Gamma,
-            "training_epochs": len(self.training_history),
-            "final_error": self.training_history[-1] if self.training_history else 0.0
+            "visible": self.qbm.v if self.qbm else 0,
+            "hidden": self.qbm.h if self.qbm else 0,
+            "training_runs": len(self.results),
+            "final_loss": self.learner.loss_history[-1] if self.learner and self.learner.loss_history else 0.0
         }
