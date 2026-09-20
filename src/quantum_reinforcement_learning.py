@@ -1,217 +1,232 @@
 """
 Quantum Reinforcement Learning Module
-Quantum policy gradients, quantum Q-learning, and
-variational quantum circuits for autonomous decision making.
+Quantum policy gradients, variational quantum circuits for RL agents,
+action selection, and environment interaction for autonomous control.
 """
 
 import math
 import random
-from typing import Dict, List, Tuple, Callable, Optional
+from typing import Dict, List, Tuple, Optional, Callable
 from dataclasses import dataclass
 
 
 class QuantumPolicy:
     """
-    Quantum policy represented by a variational circuit.
+    Parameterized quantum policy for RL.
     """
     
     def __init__(self, num_qubits: int = 4, num_actions: int = 2):
         """
         Args:
-            num_qubits: Circuit qubits
-            num_actions: Number of actions
+            num_qubits: Qubits
+            num_actions: Action space size
         """
         self.n = num_qubits
         self.actions = num_actions
-        self.params: List[float] = [0.0] * (num_qubits * 2)
-        self._init_params()
+        self.params = [random.uniform(0, 2.0 * math.pi) for _ in range(num_qubits * 2)]
     
-    def _init_params(self):
-        """Initialize parameters randomly."""
-        self.params = [random.uniform(-math.pi, math.pi)
-                       for _ in range(len(self.params))]
-    
-    def action_probabilities(self, state: int) -> List[float]:
+    def rotation_gate(self, angle: float) -> List[List[complex]]:
         """
-        Compute action probabilities.
+        RX rotation matrix.
         
         Args:
-            state: Current state
+            angle: Rotation angle
         
         Returns:
-            Probability distribution over actions
+            Matrix
         """
-        # Simulate parameterized quantum circuit output
+        c = math.cos(angle / 2.0)
+        s = math.sin(angle / 2.0)
+        return [[complex(c, 0.0), complex(0.0, -s)],
+                [complex(0.0, -s), complex(c, 0.0)]]
+    
+    def entangling_gate(self, state: List[complex],
+                       qubit_i: int, qubit_j: int) -> List[complex]:
+        """
+        Apply CNOT-like entangling operation.
+        
+        Args:
+            state: State
+            qubit_i: Control
+            qubit_j: Target
+        
+        Returns:
+            New state
+        """
+        dim = len(state)
+        new_state = state[:]
+        
+        for i in range(dim):
+            if (i >> qubit_i) & 1:
+                flipped = i ^ (1 << qubit_j)
+                if flipped < dim:
+                    new_state[i], new_state[flipped] = new_state[flipped], new_state[i]
+        
+        return new_state
+    
+    def evaluate(self, state_encoding: List[float]) -> List[float]:
+        """
+        Evaluate policy for state.
+        
+        Args:
+            state_encoding: State features
+        
+        Returns:
+            Action probabilities
+        """
+        dim = 2 ** self.n
+        # Initialize uniform
+        quantum_state = [complex(1.0 / math.sqrt(dim), 0.0)] * dim
+        
+        # Encode state into rotation angles
+        for i in range(min(len(state_encoding), self.n)):
+            angle = state_encoding[i] * math.pi
+            # Apply rotation
+            for j in range(dim):
+                if (j >> i) & 1:
+                    quantum_state[j] *= complex(math.cos(angle), math.sin(angle))
+        
+        # Apply parameterized gates
+        for i in range(self.n):
+            if i < len(self.params):
+                angle = self.params[i]
+                for j in range(dim):
+                    if (j >> i) & 1:
+                        quantum_state[j] *= complex(math.cos(angle), math.sin(angle))
+        
+        # Measure: compute probabilities for each action
         probs = []
         for a in range(self.actions):
-            val = math.sin(self.params[a % len(self.params)] + state * 0.1)
-            probs.append(max(0.0, val + 1.0))
+            # Map action to subset of basis states
+            prob = 0.0
+            for j in range(dim):
+                if j % self.actions == a:
+                    prob += abs(quantum_state[j]) ** 2
+            probs.append(max(0.0, prob))
         
+        # Normalize
         total = sum(probs)
         if total > 0:
-            return [p / total for p in probs]
-        return [1.0 / self.actions] * self.actions
+            probs = [p / total for p in probs]
+        else:
+            probs = [1.0 / self.actions] * self.actions
+        
+        return probs
     
-    def select_action(self, state: int) -> int:
+    def select_action(self, state_encoding: List[float]) -> int:
         """
-        Select action via sampling.
+        Select action from policy.
         
         Args:
-            state: Current state
+            state_encoding: State
         
         Returns:
-            Selected action
+            Action
         """
-        probs = self.action_probabilities(state)
+        probs = self.evaluate(state_encoding)
         r = random.random()
         cumsum = 0.0
         for i, p in enumerate(probs):
             cumsum += p
             if r <= cumsum:
                 return i
-        return self.actions - 1
-    
-    def update(self, gradients: List[float], lr: float = 0.01):
-        """
-        Update parameters.
-        
-        Args:
-            gradients: Parameter gradients
-            lr: Learning rate
-        """
-        for i in range(min(len(self.params), len(gradients))):
-            self.params[i] -= lr * gradients[i]
-
-
-class QuantumQFunction:
-    """
-    Quantum Q-function approximator.
-    """
-    
-    def __init__(self, num_states: int, num_actions: int):
-        """
-        Args:
-            num_states: Number of states
-            num_actions: Number of actions
-        """
-        self.num_states = num_states
-        self.num_actions = num_actions
-        self.q_table: Dict[Tuple[int, int], float] = {}
-    
-    def get(self, state: int, action: int) -> float:
-        """
-        Get Q-value.
-        
-        Args:
-            state: State
-            action: Action
-        
-        Returns:
-            Q-value
-        """
-        return self.q_table.get((state, action), 0.0)
-    
-    def set(self, state: int, action: int, value: float):
-        """Set Q-value."""
-        self.q_table[(state, action)] = value
-    
-    def best_action(self, state: int) -> int:
-        """
-        Get best action.
-        
-        Args:
-            state: State
-        
-        Returns:
-            Best action
-        """
-        q_vals = [self.get(state, a) for a in range(self.num_actions)]
-        return q_vals.index(max(q_vals))
-    
-    def max_q(self, state: int) -> float:
-        """
-        Get max Q-value.
-        
-        Args:
-            state: State
-        
-        Returns:
-            Max Q
-        """
-        return max(self.get(state, a) for a in range(self.num_actions))
+        return len(probs) - 1
 
 
 class QuantumPolicyGradient:
     """
-    Quantum policy gradient optimizer.
+    Policy gradient optimization for quantum RL.
     """
     
-    def __init__(self, policy: QuantumPolicy,
-                 learning_rate: float = 0.01):
+    def __init__(self, policy: QuantumPolicy, lr: float = 0.1):
         """
         Args:
             policy: Quantum policy
-            learning_rate: Learning rate
+            lr: Learning rate
         """
         self.policy = policy
-        self.lr = learning_rate
-        self.trajectory: List[Tuple[int, int, float]] = []
+        self.lr = lr
+        self.rewards: List[float] = []
+        self.log_probs: List[float] = []
     
-    def record(self, state: int, action: int, reward: float):
-        """Record trajectory step."""
-        self.trajectory.append((state, action, reward))
-    
-    def compute_gradients(self) -> List[float]:
+    def store_transition(self, log_prob: float, reward: float):
         """
-        Compute parameter gradients from trajectory.
+        Store transition.
+        
+        Args:
+            log_prob: Log probability
+            reward: Reward
+        """
+        self.log_probs.append(log_prob)
+        self.rewards.append(reward)
+    
+    def compute_returns(self, gamma: float = 0.99) -> List[float]:
+        """
+        Compute discounted returns.
+        
+        Args:
+            gamma: Discount factor
         
         Returns:
-            Gradients
+            Returns
         """
-        grads = [0.0] * len(self.policy.params)
+        returns = []
+        R = 0.0
+        for r in reversed(self.rewards):
+            R = r + gamma * R
+            returns.insert(0, R)
         
-        for state, action, reward in self.trajectory:
-            probs = self.policy.action_probabilities(state)
-            # Policy gradient: d log(pi(a|s)) / d theta
-            for i in range(len(grads)):
-                # Simplified gradient
-                grad = math.cos(self.policy.params[i] + state * 0.1)
-                if action == i % self.policy.actions:
-                    grads[i] += reward * grad / (probs[action] + 1e-8)
+        # Normalize
+        if returns:
+            mean = sum(returns) / len(returns)
+            std = (sum((r - mean)**2 for r in returns) / len(returns)) ** 0.5
+            if std > 1e-10:
+                returns = [(r - mean) / std for r in returns]
         
-        return grads
+        return returns
     
-    def update(self):
-        """Update policy."""
-        grads = self.compute_gradients()
-        self.policy.update(grads, self.lr)
-        self.trajectory = []
+    def update(self, gamma: float = 0.99):
+        """
+        Update policy parameters.
+        
+        Args:
+            gamma: Discount factor
+        """
+        returns = self.compute_returns(gamma)
+        
+        # Gradient ascent on policy parameters
+        for i in range(len(self.policy.params)):
+            grad = 0.0
+            for log_prob, ret in zip(self.log_probs, returns):
+                # Simplified gradient: d(log_prob)/d(param) ~ log_prob
+                grad += log_prob * ret
+            
+            self.policy.params[i] += self.lr * grad / max(len(self.log_probs), 1)
+        
+        # Clear buffers
+        self.rewards = []
+        self.log_probs = []
 
 
-class QuantumQLearning:
+class QuantumRLAgent:
     """
-    Quantum Q-learning agent.
+    Quantum RL agent for environment interaction.
     """
     
-    def __init__(self, num_states: int, num_actions: int,
-                 alpha: float = 0.1, gamma: float = 0.9,
-                 epsilon: float = 0.1):
+    def __init__(self, state_dim: int = 2, num_actions: int = 2):
         """
         Args:
-            num_states: Number of states
-            num_actions: Number of actions
-            alpha: Learning rate
-            gamma: Discount factor
-            epsilon: Exploration rate
+            state_dim: State dimension
+            num_actions: Actions
         """
-        self.q = QuantumQFunction(num_states, num_actions)
-        self.alpha = alpha
-        self.gamma = gamma
-        self.epsilon = epsilon
+        self.state_dim = state_dim
+        self.policy = QuantumPolicy(state_dim, num_actions)
+        self.optimizer = QuantumPolicyGradient(self.policy)
+        self.episode_rewards: List[float] = []
     
-    def select_action(self, state: int) -> int:
+    def act(self, state: List[float]) -> int:
         """
-        Epsilon-greedy action selection.
+        Select action.
         
         Args:
             state: State
@@ -219,26 +234,39 @@ class QuantumQLearning:
         Returns:
             Action
         """
-        if random.random() < self.epsilon:
-            return random.randint(0, self.q.num_actions - 1)
-        return self.q.best_action(state)
+        return self.policy.select_action(state)
     
-    def update(self, state: int, action: int,
-              reward: float, next_state: int):
+    def step(self, state: List[float], action: int, reward: float):
         """
-        Q-learning update.
+        Record step.
         
         Args:
-            state: Current state
-            action: Action taken
-            reward: Reward received
-            next_state: Next state
+            state: State
+            action: Action
+            reward: Reward
         """
-        current_q = self.q.get(state, action)
-        max_next = self.q.max_q(next_state)
+        probs = self.policy.evaluate(state)
+        log_prob = math.log(max(probs[action], 1e-10))
+        self.optimizer.store_transition(log_prob, reward)
+    
+    def finish_episode(self):
+        """Finish episode and update."""
+        total_reward = sum(self.optimizer.rewards)
+        self.episode_rewards.append(total_reward)
+        self.optimizer.update()
+    
+    def mean_reward(self, window: int = 10) -> float:
+        """
+        Mean recent reward.
         
-        new_q = current_q + self.alpha * (reward + self.gamma * max_next - current_q)
-        self.q.set(state, action, new_q)
+        Args:
+            window: Window
+        
+        Returns:
+            Mean
+        """
+        recent = self.episode_rewards[-window:]
+        return sum(recent) / len(recent) if recent else 0.0
 
 
 class QuantumReinforcementLearning:
@@ -247,76 +275,63 @@ class QuantumReinforcementLearning:
     """
     
     def __init__(self):
-        self.policy_grad: Optional[QuantumPolicyGradient] = None
-        self.q_learning: Optional[QuantumQLearning] = None
-        self.episode_rewards: List[float] = []
+        self.agent: Optional[QuantumRLAgent] = None
+        self.results: List[Dict] = []
     
-    def setup_policy_gradient(self, num_qubits: int = 4,
-                              num_actions: int = 2):
+    def build_agent(self, state_dim: int = 2, num_actions: int = 2):
         """
-        Setup policy gradient.
+        Build agent.
         
         Args:
-            num_qubits: Qubits
+            state_dim: State dimension
             num_actions: Actions
         """
-        policy = QuantumPolicy(num_qubits, num_actions)
-        self.policy_grad = QuantumPolicyGradient(policy)
+        self.agent = QuantumRLAgent(state_dim, num_actions)
     
-    def setup_q_learning(self, num_states: int, num_actions: int):
+    def train(self, environment: Callable[[int], Tuple[List[float], float]],
+             episodes: int = 100) -> Dict:
         """
-        Setup Q-learning.
+        Train agent.
         
         Args:
-            num_states: States
-            num_actions: Actions
-        """
-        self.q_learning = QuantumQLearning(num_states, num_actions)
-    
-    def run_episode(self, env_steps: int = 10) -> float:
-        """
-        Run a single episode.
-        
-        Args:
-            env_steps: Number of steps
+            environment: Environment function (action -> state, reward)
+            episodes: Episodes
         
         Returns:
-            Total reward
+            Result
         """
-        total_reward = 0.0
+        if self.agent is None:
+            self.build_agent()
         
-        if self.q_learning is not None:
-            state = 0
-            for _ in range(env_steps):
-                action = self.q_learning.select_action(state)
-                reward = random.uniform(-1.0, 1.0)
-                next_state = (state + action) % self.q_learning.q.num_states
-                self.q_learning.update(state, action, reward, next_state)
-                total_reward += reward
+        for _ in range(episodes):
+            state = [0.0] * self.agent.state_dim
+            done = False
+            steps = 0
+            max_steps = 50
+            
+            while not done and steps < max_steps:
+                action = self.agent.act(state)
+                next_state, reward = environment(action)
+                self.agent.step(state, action, reward)
                 state = next_state
+                steps += 1
+                
+                if reward > 10.0:
+                    done = True
+            
+            self.agent.finish_episode()
         
-        self.episode_rewards.append(total_reward)
-        return total_reward
+        result = {
+            "episodes": episodes,
+            "mean_reward": self.agent.mean_reward(),
+            "final_params": self.agent.policy.params[:5]
+        }
+        self.results.append(result)
+        return result
     
-    def average_reward(self, window: int = 10) -> float:
-        """
-        Compute average reward.
-        
-        Args:
-            window: Window size
-        
-        Returns:
-            Average
-        """
-        recent = self.episode_rewards[-window:]
-        if not recent:
-            return 0.0
-        return sum(recent) / len(recent)
-    
-    def rl_summary(self) -> Dict:
-        """Get RL summary."""
+    def qrl_summary(self) -> Dict:
+        """Get summary."""
         return {
-            "episodes": len(self.episode_rewards),
-            "avg_reward": self.average_reward(),
-            "best_reward": max(self.episode_rewards) if self.episode_rewards else 0.0
+            "runs": len(self.results),
+            "best_mean_reward": max((r["mean_reward"] for r in self.results), default=0.0)
         }
