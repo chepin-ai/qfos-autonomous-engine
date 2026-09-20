@@ -1,307 +1,342 @@
 """
 Vibration Analysis Module
-FFT spectrum analysis, RMS/peak detection, bearing fault diagnosis,
-crest factor, kurtosis, and envelope analysis for autonomous condition monitoring.
+Time domain analysis, frequency domain analysis, modal analysis,
+shock response, and vibration severity assessment for autonomous NDT.
 """
 
 import math
 from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass
-from enum import Enum
 
 
-class BearingFaultType(Enum):
-    """Types of bearing faults."""
-    OUTER_RACE = "outer_race"
-    INNER_RACE = "inner_race"
-    BALL = "ball"
-    CAGE = "cage"
+@dataclass
+class VibrationSample:
+    """Vibration sample."""
+    timestamp_s: float
+    acceleration_ms2: float
 
 
-class VibrationAnalyzer:
+class TimeDomainAnalyzer:
     """
-    Core vibration signal analysis.
+    Time domain vibration analysis.
     """
     
-    def __init__(self, sampling_rate_Hz: float = 10000.0):
-        """
-        Args:
-            sampling_rate_Hz: Sampling rate
-        """
-        self.fs = sampling_rate_Hz
+    def __init__(self):
+        pass
     
-    def rms(self, signal: List[float]) -> float:
+    def rms(self, samples: List[float]) -> float:
         """
         Compute RMS.
         
         Args:
-            signal: Time series
+            samples: Acceleration values
         
         Returns:
-            RMS value
+            RMS in m/s2
         """
-        if not signal:
+        if not samples:
             return 0.0
-        return math.sqrt(sum(x**2 for x in signal) / len(signal))
+        return math.sqrt(sum(a**2 for a in samples) / len(samples))
     
-    def peak(self, signal: List[float]) -> float:
+    def peak(self, samples: List[float]) -> float:
         """
-        Compute peak amplitude.
+        Compute peak.
         
         Args:
-            signal: Time series
+            samples: Values
         
         Returns:
-            Peak
+            Peak in m/s2
         """
-        if not signal:
+        if not samples:
             return 0.0
-        return max(abs(x) for x in signal)
+        return max(abs(a) for a in samples)
     
-    def peak_to_peak(self, signal: List[float]) -> float:
+    def crest_factor(self, samples: List[float]) -> float:
         """
-        Compute peak-to-peak.
+        Compute crest factor.
         
         Args:
-            signal: Time series
-        
-        Returns:
-            P-P
-        """
-        if not signal:
-            return 0.0
-        return max(signal) - min(signal)
-    
-    def crest_factor(self, signal: List[float]) -> float:
-        """
-        Compute crest factor = peak / RMS.
-        
-        Args:
-            signal: Time series
+            samples: Values
         
         Returns:
             Crest factor
         """
-        rms_val = self.rms(signal)
+        rms_val = self.rms(samples)
+        peak_val = self.peak(samples)
         if rms_val <= 0:
             return 0.0
-        return self.peak(signal) / rms_val
+        return peak_val / rms_val
     
-    def kurtosis(self, signal: List[float]) -> float:
+    def kurtosis(self, samples: List[float]) -> float:
         """
-        Compute kurtosis (normalized).
+        Compute kurtosis.
         
         Args:
-            signal: Time series
+            samples: Values
         
         Returns:
             Kurtosis
         """
-        if not signal:
+        if len(samples) < 4:
             return 0.0
-        n = len(signal)
-        mean = sum(signal) / n
-        variance = sum((x - mean)**2 for x in signal) / n
+        
+        n = len(samples)
+        mean = sum(samples) / n
+        variance = sum((a - mean)**2 for a in samples) / n
+        
         if variance <= 0:
             return 0.0
-        return sum((x - mean)**4 for x in signal) / (n * variance**2) - 3.0
-    
-    def dft(self, signal: List[float]) -> List[complex]:
-        """
-        Discrete Fourier Transform.
         
-        Args:
-            signal: Time series
-        
-        Returns:
-            Complex spectrum
-        """
-        N = len(signal)
-        spectrum = []
-        for k in range(N):
-            real = sum(signal[n] * math.cos(2.0 * math.pi * k * n / N) for n in range(N))
-            imag = -sum(signal[n] * math.sin(2.0 * math.pi * k * n / N) for n in range(N))
-            spectrum.append(complex(real, imag))
-        return spectrum
-    
-    def magnitude_spectrum(self, signal: List[float]) -> List[float]:
-        """
-        Compute magnitude spectrum.
-        
-        Args:
-            signal: Time series
-        
-        Returns:
-            Magnitudes
-        """
-        spectrum = self.dft(signal)
-        return [abs(c) / len(signal) for c in spectrum[:len(spectrum)//2]]
-    
-    def dominant_frequency(self, signal: List[float]) -> Tuple[float, float]:
-        """
-        Find dominant frequency.
-        
-        Args:
-            signal: Time series
-        
-        Returns:
-            (frequency_Hz, magnitude)
-        """
-        mags = self.magnitude_spectrum(signal)
-        if not mags:
-            return (0.0, 0.0)
-        
-        max_idx = max(range(len(mags)), key=lambda i: mags[i])
-        freq_resolution = self.fs / len(signal)
-        return (max_idx * freq_resolution, mags[max_idx])
+        fourth_moment = sum((a - mean)**4 for a in samples) / n
+        return fourth_moment / (variance ** 2)
 
 
-class BearingDiagnoser:
+class FrequencyDomainAnalyzer:
     """
-    Bearing fault diagnosis.
-    """
-    
-    def __init__(self, shaft_speed_rpm: float = 1800.0,
-                 num_balls: int = 8,
-                 ball_diameter_mm: float = 10.0,
-                 pitch_diameter_mm: float = 50.0,
-                 contact_angle_deg: float = 0.0):
-        """
-        Args:
-            shaft_speed_rpm: Shaft speed
-            num_balls: Number of balls
-            ball_diameter_mm: Ball diameter
-            pitch_diameter_mm: Pitch diameter
-            contact_angle_deg: Contact angle
-        """
-        self.speed_hz = shaft_speed_rpm / 60.0
-        self.Nb = num_balls
-        self.Bd = ball_diameter_mm
-        self.Pd = pitch_diameter_mm
-        self.beta = math.radians(contact_angle_deg)
-    
-    def bpf_outer(self) -> float:
-        """
-        Ball pass frequency outer race.
-        
-        Returns:
-            Frequency in Hz
-        """
-        return self.Nb * self.speed_hz / 2.0 * (1.0 - self.Bd / self.Pd * math.cos(self.beta))
-    
-    def bpf_inner(self) -> float:
-        """
-        Ball pass frequency inner race.
-        
-        Returns:
-            Frequency in Hz
-        """
-        return self.Nb * self.speed_hz / 2.0 * (1.0 + self.Bd / self.Pd * math.cos(self.beta))
-    
-    def bsf(self) -> float:
-        """
-        Ball spin frequency.
-        
-        Returns:
-            Frequency in Hz
-        """
-        return self.Pd / self.Bd * self.speed_hz / 2.0 * (1.0 - (self.Bd / self.Pd * math.cos(self.beta))**2)
-    
-    def ftf(self) -> float:
-        """
-        Fundamental train frequency (cage).
-        
-        Returns:
-            Frequency in Hz
-        """
-        return self.speed_hz / 2.0 * (1.0 - self.Bd / self.Pd * math.cos(self.beta))
-    
-    def detect_fault(self, spectrum: List[float],
-                    freq_resolution_Hz: float,
-                    threshold_multiplier: float = 3.0) -> Dict[str, bool]:
-        """
-        Detect bearing faults from spectrum.
-        
-        Args:
-            spectrum: Magnitude spectrum
-            freq_resolution_Hz: Frequency resolution
-            threshold_multiplier: Detection threshold
-        
-        Returns:
-            Fault detection results
-        """
-        if not spectrum:
-            return {t.value: False for t in BearingFaultType}
-        
-        baseline = sum(spectrum) / len(spectrum)
-        threshold = baseline * threshold_multiplier
-        
-        freqs = {
-            BearingFaultType.OUTER_RACE: self.bpf_outer(),
-            BearingFaultType.INNER_RACE: self.bpf_inner(),
-            BearingFaultType.BALL: self.bsf(),
-            BearingFaultType.CAGE: self.ftf()
-        }
-        
-        results = {}
-        for fault_type, freq in freqs.items():
-            idx = int(round(freq / freq_resolution_Hz))
-            if 0 <= idx < len(spectrum):
-                results[fault_type.value] = spectrum[idx] > threshold
-            else:
-                results[fault_type.value] = False
-        
-        return results
-
-
-class EnvelopeAnalyzer:
-    """
-    Envelope analysis for bearing diagnostics.
+    Frequency domain vibration analysis.
     """
     
-    def __init__(self, sampling_rate_Hz: float = 10000.0):
+    def __init__(self, sampling_rate_Hz: float = 1000.0):
         """
         Args:
             sampling_rate_Hz: Sampling rate
         """
         self.fs = sampling_rate_Hz
     
-    def hilbert_envelope(self, signal: List[float]) -> List[float]:
+    def dft(self, samples: List[float]) -> List[complex]:
         """
-        Compute envelope using Hilbert transform approximation.
+        Compute DFT.
         
         Args:
-            signal: Time series
+            samples: Time domain samples
         
         Returns:
-            Envelope
+            Frequency domain
         """
-        if not signal:
-            return []
-        
-        # Simplified: square and smooth
-        squared = [x**2 for x in signal]
-        envelope = []
-        window = 5
-        for i in range(len(squared)):
-            start = max(0, i - window//2)
-            end = min(len(squared), i + window//2 + 1)
-            envelope.append(math.sqrt(sum(squared[start:end]) / (end - start)))
-        return envelope
+        N = len(samples)
+        result = []
+        for k in range(N):
+            real = 0.0
+            imag = 0.0
+            for n in range(N):
+                angle = -2.0 * math.pi * k * n / N
+                real += samples[n] * math.cos(angle)
+                imag += samples[n] * math.sin(angle)
+            result.append(complex(real, imag))
+        return result
     
-    def envelope_spectrum(self, signal: List[float]) -> List[float]:
+    def magnitude_spectrum(self, samples: List[float]) -> List[float]:
         """
-        Compute envelope spectrum.
+        Compute magnitude spectrum.
         
         Args:
-            signal: Time series
+            samples: Time domain
         
         Returns:
-            Envelope spectrum magnitudes
+            Magnitudes
         """
-        env = self.hilbert_envelope(signal)
-        analyzer = VibrationAnalyzer(self.fs)
-        return analyzer.magnitude_spectrum(env)
+        dft_result = self.dft(samples)
+        N = len(samples)
+        return [abs(dft_result[k]) / N for k in range(N // 2)]
+    
+    def dominant_frequency(self, samples: List[float]) -> float:
+        """
+        Find dominant frequency.
+        
+        Args:
+            samples: Time domain
+        
+        Returns:
+            Dominant frequency in Hz
+        """
+        mags = self.magnitude_spectrum(samples)
+        if not mags:
+            return 0.0
+        
+        max_idx = mags.index(max(mags))
+        return max_idx * self.fs / len(samples)
+    
+    def octave_band(self, samples: List[float],
+                   center_freq_Hz: float) -> float:
+        """
+        Compute octave band level.
+        
+        Args:
+            samples: Time domain
+            center_freq_Hz: Center frequency
+        
+        Returns:
+        """
+        mags = self.magnitude_spectrum(samples)
+        N = len(samples)
+        freqs = [k * self.fs / N for k in range(N // 2)]
+        
+        # Find band
+        lower = center_freq_Hz / math.sqrt(2)
+        upper = center_freq_Hz * math.sqrt(2)
+        
+        band_energy = 0.0
+        for i, f in enumerate(freqs):
+            if lower <= f <= upper and i < len(mags):
+                band_energy += mags[i] ** 2
+        
+        return math.sqrt(band_energy)
+
+
+class ModalAnalyzer:
+    """
+    Modal analysis.
+    """
+    
+    def __init__(self):
+        self.modes: List[Dict] = []
+    
+    def natural_frequency(self, stiffness_N_m: float,
+                         mass_kg: float) -> float:
+        """
+        Compute natural frequency.
+        
+        Args:
+            stiffness_N_m: Stiffness
+            mass_kg: Mass
+        
+        Returns:
+            Natural frequency in Hz
+        """
+        if mass_kg <= 0:
+            return 0.0
+        return math.sqrt(stiffness_N_m / mass_kg) / (2.0 * math.pi)
+    
+    def damping_ratio(self, natural_freq_Hz: float,
+                     damped_freq_Hz: float) -> float:
+        """
+        Compute damping ratio.
+        
+        Args:
+            natural_freq_Hz: Natural frequency
+            damped_freq_Hz: Damped frequency
+        
+        Returns:
+            Damping ratio
+        """
+        if natural_freq_Hz <= 0:
+            return 0.0
+        ratio = damped_freq_Hz / natural_freq_Hz
+        if ratio >= 1.0:
+            return 0.0
+        return math.sqrt(1.0 - ratio ** 2)
+    
+    def add_mode(self, freq_Hz: float, damping: float,
+                mode_shape: List[float]):
+        """
+        Add mode.
+        
+        Args:
+            freq_Hz: Frequency
+            damping: Damping ratio
+            mode_shape: Mode shape
+        """
+        self.modes.append({
+            "frequency_Hz": freq_Hz,
+            "damping_ratio": damping,
+            "mode_shape": mode_shape
+        })
+
+
+class ShockResponseAnalyzer:
+    """
+    Shock response analysis.
+    """
+    
+    def __init__(self):
+        pass
+    
+    def shock_spectrum(self, pulse_samples: List[float],
+                      natural_freqs_Hz: List[float],
+                      sampling_rate_Hz: float = 1000.0) -> List[float]:
+        """
+        Compute shock response spectrum.
+        
+        Args:
+            pulse_samples: Pulse acceleration
+            natural_freqs_Hz: Natural frequencies
+            sampling_rate_Hz: Sampling rate
+        
+        Returns:
+            SRS values
+        """
+        srs = []
+        dt = 1.0 / sampling_rate_Hz
+        
+        for fn in natural_freqs_Hz:
+            if fn <= 0:
+                srs.append(0.0)
+                continue
+            
+            omega = 2.0 * math.pi * fn
+            # Simplified: max response of SDOF
+            max_resp = 0.0
+            resp = 0.0
+            vel = 0.0
+            
+            for acc in pulse_samples:
+                # Newmark-beta (simplified)
+                vel += acc * dt
+                resp += vel * dt
+                # Restoring force
+                vel -= omega * omega * resp * dt
+                max_resp = max(max_resp, abs(resp))
+            
+            srs.append(max_resp * omega * omega)
+        
+        return srs
+
+
+class VibrationSeverity:
+    """
+    Vibration severity assessment.
+    """
+    
+    def __init__(self):
+        self.iso_thresholds = [
+            (0.28, "good"),
+            (1.12, "satisfactory"),
+            (2.8, "unsatisfactory"),
+            (7.1, "unacceptable")
+        ]
+    
+    def assess_iso(self, rms_velocity_mm_s: float) -> str:
+        """
+        Assess per ISO 10816.
+        
+        Args:
+            rms_velocity_mm_s: RMS velocity
+        
+        Returns:
+            Severity class
+        """
+        for threshold, level in self.iso_thresholds:
+            if rms_velocity_mm_s <= threshold:
+                return level
+        return "unacceptable"
+    
+    def velocity_from_acceleration(self, rms_accel_ms2: float,
+                                   freq_Hz: float = 60.0) -> float:
+        """
+        Convert acceleration to velocity.
+        
+        Args:
+            rms_accel_ms2: RMS acceleration
+            freq_Hz: Frequency
+        
+        Returns:
+            RMS velocity in mm/s
+        """
+        if freq_Hz <= 0:
+            return 0.0
+        omega = 2.0 * math.pi * freq_Hz
+        return rms_accel_ms2 / omega * 1000.0
 
 
 class VibrationAnalysis:
@@ -309,70 +344,55 @@ class VibrationAnalysis:
     Unified vibration analysis controller.
     """
     
-    def __init__(self, sampling_rate_Hz: float = 10000.0):
-        """
-        Args:
-            sampling_rate_Hz: Sampling rate
-        """
-        self.analyzer = VibrationAnalyzer(sampling_rate_Hz)
-        self.bearing = BearingDiagnoser()
-        self.envelope = EnvelopeAnalyzer(sampling_rate_Hz)
-        self.history: List[Dict] = []
+    def __init__(self, sampling_rate_Hz: float = 1000.0):
+        self.time_domain = TimeDomainAnalyzer()
+        self.freq_domain = FrequencyDomainAnalyzer(sampling_rate_Hz)
+        self.modal = ModalAnalyzer()
+        self.shock = ShockResponseAnalyzer()
+        self.severity = VibrationSeverity()
+        self.samples: List[float] = []
     
-    def analyze(self, signal: List[float]) -> Dict:
+    def record(self, samples: List[float]):
         """
-        Full vibration analysis.
+        Record samples.
         
         Args:
-            signal: Time series
+            samples: Acceleration samples
+        """
+        self.samples = samples
+    
+    def analyze(self) -> Dict:
+        """
+        Analyze vibration.
         
         Returns:
-            Analysis report
+            Results
         """
-        rms_val = self.analyzer.rms(signal)
-        peak_val = self.analyzer.peak(signal)
-        crest = self.analyzer.crest_factor(signal)
-        kurt = self.analyzer.kurtosis(signal)
+        if not self.samples:
+            return {}
         
-        dom_freq, dom_mag = self.analyzer.dominant_frequency(signal)
-        spectrum = self.analyzer.magnitude_spectrum(signal)
+        rms = self.time_domain.rms(self.samples)
+        peak = self.time_domain.peak(self.samples)
+        crest = self.time_domain.crest_factor(self.samples)
+        kurt = self.time_domain.kurtosis(self.samples)
+        dom_freq = self.freq_domain.dominant_frequency(self.samples)
         
-        freq_res = self.analyzer.fs / len(signal) if signal else 1.0
-        faults = self.bearing.detect_fault(spectrum, freq_res)
+        vel = self.severity.velocity_from_acceleration(rms, dom_freq)
+        severity = self.severity.assess_iso(vel)
         
-        report = {
-            "rms": rms_val,
-            "peak": peak_val,
+        return {
+            "rms_ms2": rms,
+            "peak_ms2": peak,
             "crest_factor": crest,
             "kurtosis": kurt,
-            "dominant_frequency_Hz": dom_freq,
-            "dominant_magnitude": dom_mag,
-            "bearing_faults": faults,
-            "alert": crest > 6.0 or kurt > 3.0
+            "dominant_freq_Hz": dom_freq,
+            "velocity_mm_s": vel,
+            "severity": severity
         }
-        self.history.append(report)
-        return report
     
-    def trend_analysis(self, parameter: str = "rms") -> List[float]:
-        """
-        Extract parameter trend.
-        
-        Args:
-            parameter: Parameter name
-        
-        Returns:
-            Trend values
-        """
-        return [h.get(parameter, 0.0) for h in self.history]
-    
-    def analysis_summary(self) -> Dict:
-        """Get analysis summary."""
-        if not self.history:
-            return {"status": "no_data"}
-        
-        alerts = sum(1 for h in self.history if h.get("alert", False))
+    def va_summary(self) -> Dict:
+        """Get summary."""
         return {
-            "analyses": len(self.history),
-            "alerts": alerts,
-            "avg_rms": sum(h["rms"] for h in self.history) / len(self.history)
+            "samples": len(self.samples),
+            "fs_Hz": self.freq_domain.fs
         }

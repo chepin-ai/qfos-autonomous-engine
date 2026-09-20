@@ -1,378 +1,371 @@
 """
 Quantum Error Correction Module
-Bit-flip code, phase-flip code, Shor code, syndrome
-measurement, and stabilizer formalism for autonomous quantum computing.
+Bit-flip code, phase-flip code, Shor code, Steane code,
+and syndrome measurement for autonomous quantum computing.
 """
 
 import math
+import random
 from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass
 
 
 @dataclass
-class QuantumError:
-    """Quantum error."""
-    qubit_index: int
-    error_type: str  # "X", "Z", "Y"
+class QubitState:
+    """Logical qubit state."""
+    physical_qubits: List[int]  # 0 or 1
+    error_type: str  # "none", "bit", "phase"
 
 
 class BitFlipCode:
     """
-    3-qubit bit-flip code.
+    3-qubit bit-flip error correction code.
     """
     
     def __init__(self):
-        self.code_distance = 3
+        pass
     
-    def encode(self, logical_state: List[complex]) -> List[complex]:
+    def encode(self, logical_bit: int) -> List[int]:
         """
-        Encode logical qubit.
+        Encode logical bit.
         
         Args:
-            logical_state: [alpha, beta]
+            logical_bit: 0 or 1
         
         Returns:
-            Encoded state (8 amplitudes for 3 qubits)
+            3 physical qubits
         """
-        if len(logical_state) < 2:
-            logical_state = [1.0, 0.0]
-        
-        alpha = logical_state[0]
-        beta = logical_state[1]
-        
-        # |0_L> = |000>, |1_L> = |111>
-        state = [0.0] * 8
-        state[0] = alpha  # |000>
-        state[7] = beta   # |111>
-        
-        return state
+        return [logical_bit] * 3
     
-    def measure_syndrome(self, state: List[complex]) -> List[int]:
+    def apply_error(self, codeword: List[int],
+                   error_position: Optional[int] = None) -> List[int]:
         """
-        Measure syndrome.
+        Apply bit-flip error.
         
         Args:
-            state: Physical state
+            codeword: Codeword
+            error_position: Position to flip
         
         Returns:
-            Syndrome bits [s1, s2]
+            Corrupted codeword
         """
-        probs = [abs(a)**2 for a in state]
-        
-        # Syndrome Z1*Z2: eigenvalue +1 on {000,011,101,110}
-        s1 = 0 if (probs[0] + probs[3] + probs[5] + probs[6]) > 0.5 else 1
-        
-        # Syndrome Z2*Z3: eigenvalue +1 on {000,001,110,111}
-        s2 = 0 if (probs[0] + probs[1] + probs[6] + probs[7]) > 0.5 else 1
-        
-        return [s1, s2]
+        corrupted = codeword.copy()
+        if error_position is not None and 0 <= error_position < len(corrupted):
+            corrupted[error_position] = 1 - corrupted[error_position]
+        return corrupted
     
-    def correct(self, state: List[complex]) -> List[complex]:
+    def syndrome(self, codeword: List[int]) -> Tuple[int, int]:
         """
-        Correct bit-flip error.
+        Compute syndrome.
         
         Args:
-            state: State
+            codeword: Codeword
         
         Returns:
-            Corrected state
+            (z1, z2) syndrome bits
         """
-        syndrome = self.measure_syndrome(state)
-        corrected = state[:]
+        if len(codeword) < 3:
+            return (0, 0)
+        z1 = codeword[0] ^ codeword[1]
+        z2 = codeword[1] ^ codeword[2]
+        return (z1, z2)
+    
+    def correct(self, codeword: List[int]) -> List[int]:
+        """
+        Correct single bit-flip error.
         
-        if syndrome == [1, 1]:
-            # Error on qubit 1
-            corrected = self._apply_x(corrected, 1)
-        elif syndrome == [1, 0]:
-            # Error on qubit 0
-            corrected = self._apply_x(corrected, 0)
-        elif syndrome == [0, 1]:
-            # Error on qubit 2
-            corrected = self._apply_x(corrected, 2)
+        Args:
+            codeword: Corrupted codeword
+        
+        Returns:
+            Corrected codeword
+        """
+        if len(codeword) < 3:
+            return codeword
+        
+        z1, z2 = self.syndrome(codeword)
+        corrected = codeword.copy()
+        
+        if z1 == 0 and z2 == 0:
+            pass  # No error
+        elif z1 == 1 and z2 == 1:
+            corrected[1] = 1 - corrected[1]  # Error on qubit 1
+        elif z1 == 1 and z2 == 0:
+            corrected[0] = 1 - corrected[0]  # Error on qubit 0
+        elif z1 == 0 and z2 == 1:
+            corrected[2] = 1 - corrected[2]  # Error on qubit 2
         
         return corrected
     
-    def _apply_x(self, state: List[complex], qubit: int) -> List[complex]:
-        """Apply X gate."""
-        new_state = [0.0] * len(state)
-        for i, amp in enumerate(state):
-            flipped = i ^ (1 << qubit)
-            new_state[flipped] = amp
-        return new_state
-    
-    def decode(self, state: List[complex]) -> List[complex]:
+    def decode(self, codeword: List[int]) -> int:
         """
-        Decode to logical state.
+        Decode to logical bit.
         
         Args:
-            state: Physical state
+            codeword: Codeword
         
         Returns:
-            Logical state [alpha, beta]
+            Logical bit
         """
-        probs = [abs(a)**2 for a in state]
-        p0 = probs[0] + probs[1] + probs[2] + probs[3]
-        p1 = probs[4] + probs[5] + probs[6] + probs[7]
-        
-        total = p0 + p1
-        if total > 0:
-            return [math.sqrt(p0 / total), math.sqrt(p1 / total)]
-        return [1.0, 0.0]
+        if not codeword:
+            return 0
+        # Majority vote
+        return 1 if sum(codeword) >= len(codeword) / 2 else 0
 
 
 class PhaseFlipCode:
     """
-    3-qubit phase-flip code.
+    3-qubit phase-flip error correction code.
     """
     
     def __init__(self):
-        self.code_distance = 3
+        pass
     
-    def encode(self, logical_state: List[complex]) -> List[complex]:
+    def encode(self, logical_bit: int) -> List[str]:
         """
-        Encode logical qubit.
+        Encode logical bit in phase basis.
         
         Args:
-            logical_state: [alpha, beta]
+            logical_bit: 0 or 1
         
         Returns:
-            Encoded state
+            Phase states
         """
-        if len(logical_state) < 2:
-            logical_state = [1.0, 0.0]
-        
-        alpha = logical_state[0]
-        beta = logical_state[1]
-        
-        # |0_L> = |+++>, |1_L> = |--->
-        # |+> = (|0> + |1>)/sqrt(2), |-> = (|0> - |1>)/sqrt(2)
-        state = [0.0] * 8
-        
-        for i in range(8):
-            bits = bin(i).count('1')
-            sign = 1 if bits % 2 == 0 else -1
-            
-            if bits == 0 or bits == 2:
-                # Part of |+++>
-                state[i] += alpha / (2.0 * math.sqrt(2.0))
-            if bits == 3 or bits == 1:
-                # Part of |--->
-                state[i] += beta * sign / (2.0 * math.sqrt(2.0))
-        
-        return state
+        if logical_bit == 0:
+            return ["+", "+", "+"]
+        else:
+            return ["-", "-", "-"]
     
-    def measure_syndrome(self, state: List[complex]) -> List[int]:
+    def apply_phase_error(self, codeword: List[str],
+                         position: int) -> List[str]:
         """
-        Measure syndrome in X basis.
+        Apply phase flip.
         
         Args:
-            state: State
+            codeword: Codeword
+            position: Position
+        
+        Returns:
+            Corrupted codeword
+        """
+        corrupted = codeword.copy()
+        if 0 <= position < len(corrupted):
+            corrupted[position] = "-" if corrupted[position] == "+" else "+"
+        return corrupted
+    
+    def measure_phase_syndrome(self, codeword: List[str]) -> Tuple[int, int]:
+        """
+        Measure phase syndrome.
+        
+        Args:
+            codeword: Codeword
         
         Returns:
             Syndrome
         """
-        # Transform to X basis
-        x_basis = []
-        for i in range(8):
-            amp = 0.0
-            for j in range(8):
-                sign = 1 if bin(i & j).count('1') % 2 == 0 else -1
-                amp += sign * state[j]
-            x_basis.append(amp / (2.0 * math.sqrt(2.0)))
-        
-        probs = [abs(a)**2 for a in x_basis]
-        
-        s1 = 0 if (probs[0] + probs[1] + probs[2] + probs[3]) > 0.5 else 1
-        s2 = 0 if (probs[0] + probs[1] + probs[4] + probs[5]) > 0.5 else 1
-        
-        return [s1, s2]
+        if len(codeword) < 3:
+            return (0, 0)
+        # Convert to bit representation: + -> 0, - -> 1
+        bits = [0 if s == "+" else 1 for s in codeword]
+        z1 = bits[0] ^ bits[1]
+        z2 = bits[1] ^ bits[2]
+        return (z1, z2)
     
-    def correct(self, state: List[complex]) -> List[complex]:
+    def correct(self, codeword: List[str]) -> List[str]:
         """
-        Correct phase-flip error.
+        Correct phase error.
         
         Args:
-            state: State
+            codeword: Corrupted codeword
         
         Returns:
-            Corrected state
+            Corrected codeword
         """
-        syndrome = self.measure_syndrome(state)
-        corrected = state[:]
+        z1, z2 = self.measure_phase_syndrome(codeword)
+        corrected = codeword.copy()
         
-        if syndrome == [1, 1]:
-            corrected = self._apply_z(corrected, 2)
-        elif syndrome == [1, 0]:
-            corrected = self._apply_z(corrected, 1)
-        elif syndrome == [0, 1]:
-            corrected = self._apply_z(corrected, 0)
+        if z1 == 1 and z2 == 1:
+            corrected[1] = "-" if corrected[1] == "+" else "+"
+        elif z1 == 1 and z2 == 0:
+            corrected[0] = "-" if corrected[0] == "+" else "+"
+        elif z1 == 0 and z2 == 1:
+            corrected[2] = "-" if corrected[2] == "+" else "+"
         
         return corrected
-    
-    def _apply_z(self, state: List[complex], qubit: int) -> List[complex]:
-        """Apply Z gate."""
-        new_state = state[:]
-        for i in range(len(state)):
-            if (i >> qubit) & 1:
-                new_state[i] = -new_state[i]
-        return new_state
 
 
-class StabilizerFormalism:
+class ShorCode:
     """
-    Stabilizer formalism for QEC.
-    """
-    
-    def __init__(self, num_qubits: int = 3):
-        """
-        Args:
-            num_qubits: Qubits
-        """
-        self.n = num_qubits
-        self.stabilizers: List[str] = []
-    
-    def add_stabilizer(self, operator: str):
-        """
-        Add stabilizer.
-        
-        Args:
-            operator: Pauli string
-        """
-        self.stabilizers.append(operator)
-    
-    def measure_stabilizer(self, state: List[complex],
-                          operator: str) -> int:
-        """
-        Measure stabilizer.
-        
-        Args:
-            state: State
-            operator: Pauli string
-        
-        Returns:
-            Eigenvalue (+1 or -1)
-        """
-        new_state = state[:]
-        
-        for i, pauli in enumerate(operator):
-            if pauli == 'X':
-                new_state = self._apply_x_string(new_state, i)
-            elif pauli == 'Z':
-                new_state = self._apply_z_string(new_state, i)
-            elif pauli == 'Y':
-                new_state = self._apply_y_string(new_state, i)
-        
-        # Compute expectation value
-        exp = sum((new_state[i].conjugate() * state[i]).real
-                 for i in range(len(state)))
-        
-        return 1 if exp > 0 else -1
-    
-    def _apply_x_string(self, state: List[complex], qubit: int) -> List[complex]:
-        """Apply X."""
-        new_state = [0.0] * len(state)
-        for i, amp in enumerate(state):
-            flipped = i ^ (1 << qubit)
-            new_state[flipped] = amp
-        return new_state
-    
-    def _apply_z_string(self, state: List[complex], qubit: int) -> List[complex]:
-        """Apply Z."""
-        new_state = state[:]
-        for i in range(len(state)):
-            if (i >> qubit) & 1:
-                new_state[i] = -new_state[i]
-        return new_state
-    
-    def _apply_y_string(self, state: List[complex], qubit: int) -> List[complex]:
-        """Apply Y."""
-        new_state = [0.0] * len(state)
-        for i, amp in enumerate(state):
-            flipped = i ^ (1 << qubit)
-            sign = 1j if (i >> qubit) & 1 else -1j
-            new_state[flipped] = sign * amp
-        return new_state
-
-
-class QuantumErrorCorrection:
-    """
-    Unified QEC controller.
+    9-qubit Shor code.
     """
     
     def __init__(self):
         self.bit_flip = BitFlipCode()
         self.phase_flip = PhaseFlipCode()
-        self.stabilizer = StabilizerFormalism()
-        self.errors: List[QuantumError] = []
     
-    def encode_bit_flip(self, state: List[complex]) -> List[complex]:
+    def encode(self, logical_bit: int) -> List[List[int]]:
         """
-        Encode with bit-flip code.
+        Encode with Shor code.
         
         Args:
-            state: Logical state
+            logical_bit: 0 or 1
         
         Returns:
-            Encoded
+            9 physical qubits in 3 blocks
         """
-        return self.bit_flip.encode(state)
+        # First phase flip encoding
+        phase_encoded = self.phase_flip.encode(logical_bit)
+        
+        # Then bit flip encoding for each
+        blocks = []
+        for phase in phase_encoded:
+            bit_val = 0 if phase == "+" else 1
+            blocks.append(self.bit_flip.encode(bit_val))
+        
+        return blocks
     
-    def encode_phase_flip(self, state: List[complex]) -> List[complex]:
+    def decode(self, blocks: List[List[int]]) -> int:
         """
-        Encode with phase-flip code.
+        Decode Shor code.
         
         Args:
-            state: Logical state
+            blocks: 3 blocks of 3 qubits
         
         Returns:
-            Encoded
+            Logical bit
         """
-        return self.phase_flip.encode(state)
+        if len(blocks) < 3:
+            return 0
+        
+        # Correct each block
+        corrected_blocks = [self.bit_flip.correct(b) for b in blocks]
+        
+        # Decode phase
+        phase_bits = [self.bit_flip.decode(b) for b in corrected_blocks]
+        # Convert back to phase states
+        phase_states = ["+" if b == 0 else "-" for b in phase_bits]
+        corrected_phase = self.phase_flip.correct(phase_states)
+        
+        # Final decode
+        final_bits = [0 if s == "+" else 1 for s in corrected_phase]
+        return 1 if sum(final_bits) >= 2 else 0
+
+
+class SteaneCode:
+    """
+    7-qubit Steane code.
+    """
     
-    def simulate_error(self, state: List[complex],
-                      qubit: int, error_type: str) -> List[complex]:
+    def __init__(self):
+        self.stabilizers = [
+            [0, 1, 2, 3],  # XXXXIII
+            [0, 1, 4, 5],  # XXIIXXI
+            [0, 2, 4, 6],  # XIXIXIX
+        ]
+    
+    def compute_syndrome(self, codeword: List[int]) -> List[int]:
         """
-        Simulate error.
+        Compute Steane syndrome.
         
         Args:
-            state: State
-            qubit: Qubit index
-            error_type: X, Z, or Y
+            codeword: 7 qubits
         
         Returns:
-            Corrupted state
+            Syndrome bits
         """
-        self.errors.append(QuantumError(qubit, error_type))
+        if len(codeword) < 7:
+            return [0, 0, 0]
         
-        if error_type == "X":
-            return self.bit_flip._apply_x(state, qubit)
-        elif error_type == "Z":
-            return self.phase_flip._apply_z(state, qubit)
-        else:
-            return state
+        syndrome = []
+        for stab in self.stabilizers:
+            parity = sum(codeword[i] for i in stab) % 2
+            syndrome.append(parity)
+        
+        return syndrome
     
-    def correct(self, state: List[complex],
-               code_type: str = "bit_flip") -> List[complex]:
+    def correct(self, codeword: List[int]) -> List[int]:
         """
-        Correct errors.
+        Correct single error.
         
         Args:
-            state: State
-            code_type: Code type
+            codeword: Corrupted codeword
         
         Returns:
-            Corrected state
+            Corrected codeword
         """
-        if code_type == "bit_flip":
-            return self.bit_flip.correct(state)
-        elif code_type == "phase_flip":
-            return self.phase_flip.correct(state)
-        return state
+        if len(codeword) < 7:
+            return codeword
+        
+        syndrome = self.compute_syndrome(codeword)
+        corrected = codeword.copy()
+        
+        # Syndrome to error position mapping (simplified)
+        syndromes = {
+            (1, 1, 1): 0, (1, 1, 0): 1, (1, 0, 1): 2, (1, 0, 0): 3,
+            (0, 1, 1): 4, (0, 1, 0): 5, (0, 0, 1): 6
+        }
+        
+        pos = syndromes.get(tuple(syndrome))
+        if pos is not None:
+            corrected[pos] = 1 - corrected[pos]
+        
+        return corrected
+
+
+class QuantumErrorCorrection:
+    """
+    Unified quantum error correction controller.
+    """
+    
+    def __init__(self):
+        self.bit_flip = BitFlipCode()
+        self.phase_flip = PhaseFlipCode()
+        self.shor = ShorCode()
+        self.steane = SteaneCode()
+    
+    def protect_bit(self, bit: int, code: str = "bit_flip") -> List:
+        """
+        Protect bit with QEC.
+        
+        Args:
+            bit: Logical bit
+            code: Code type
+        
+        Returns:
+            Encoded codeword
+        """
+        if code == "bit_flip":
+            return self.bit_flip.encode(bit)
+        elif code == "phase_flip":
+            return self.phase_flip.encode(bit)
+        elif code == "shor":
+            return self.shor.encode(bit)
+        return [bit]
+    
+    def recover(self, codeword: List, code: str = "bit_flip") -> int:
+        """
+        Recover logical bit.
+        
+        Args:
+            codeword: Corrupted codeword
+            code: Code type
+        
+        Returns:
+            Logical bit
+        """
+        if code == "bit_flip":
+            corrected = self.bit_flip.correct(codeword)
+            return self.bit_flip.decode(corrected)
+        elif code == "phase_flip":
+            corrected = self.phase_flip.correct(codeword)
+            return 0 if corrected.count("+") >= 2 else 1
+        elif code == "shor":
+            return self.shor.decode(codeword)
+        return codeword[0] if codeword else 0
     
     def qec_summary(self) -> Dict:
         """Get summary."""
         return {
-            "code_distance": self.bit_flip.code_distance,
-            "errors_simulated": len(self.errors),
-            "stabilizers": len(self.stabilizer.stabilizers)
+            "codes": ["bit_flip", "phase_flip", "shor", "steane"],
+            "correctable_errors": "single bit/phase flip"
         }
