@@ -1,300 +1,263 @@
 """
 Eddy Current Array Module
-ECA probe arrays, impedance plane analysis, C-scan imaging,
-and defect mapping for autonomous NDT.
+ECA probe modeling, impedance plane analysis, lift-off compensation,
+and defect classification for autonomous NDT.
 """
 
 import math
 from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass
-from enum import Enum
-
-
-class ProbeOrientation(Enum):
-    """ECA probe orientations."""
-    LINEAR = "linear"
-    CIRCULAR = "circular"
-    MATRIX = "matrix"
 
 
 @dataclass
-class ECAReading:
-    """Single ECA probe reading."""
-    probe_id: int
-    x_mm: float
-    y_mm: float
-    real_mV: float
-    imag_mV: float
+class CoilConfig:
+    """EC coil configuration."""
+    diameter_mm: float
+    turns: int
+    frequency_Hz: float
     lift_off_mm: float = 0.0
 
 
-class ECAProbe:
+class ImpedancePlaneAnalyzer:
     """
-    Single ECA probe element.
+    Analyze impedance plane trajectories.
     """
     
-    def __init__(self, probe_id: int, position_mm: Tuple[float, float],
-                 frequency_Hz: float = 100000.0):
-        """
-        Args:
-            probe_id: Probe ID
-            position_mm: (x, y) position
-            frequency_Hz: Excitation frequency
-        """
-        self.probe_id = probe_id
-        self.position = position_mm
-        self.frequency = frequency_Hz
-        self.coil_diameter_mm = 3.0
+    def __init__(self):
+        pass
     
-    def impedance(self, conductivity_MS_m: float = 1.0,
-                 lift_off_mm: float = 0.0) -> complex:
+    def normalize(self, real: float, imag: float,
+                 ref_real: float, ref_imag: float) -> Tuple[float, float]:
         """
-        Compute probe impedance.
+        Normalize impedance.
         
         Args:
-            conductivity_MS_m: Material conductivity
-            lift_off_mm: Lift-off
+            real: Real part
+            imag: Imaginary part
+            ref_real: Reference real
+            ref_imag: Reference imaginary
         
         Returns:
-            Complex impedance
+            Normalized (real, imag)
         """
-        # Simplified: impedance decreases with lift-off
-        R = 10.0 + 5.0 * conductivity_MS_m
-        X = 2.0 * math.pi * self.frequency * 1e-6
+        if ref_real == 0:
+            ref_real = 1e-10
+        if ref_imag == 0:
+            ref_imag = 1e-10
         
-        lift_factor = math.exp(-lift_off_mm / self.coil_diameter_mm)
-        return complex(R * lift_factor, X * lift_factor)
+        return (real / ref_real, imag / ref_imag)
     
-    def voltage(self, reference_impedance: complex,
-               measured_impedance: complex,
-               excitation_V: float = 1.0) -> complex:
+    def angle(self, real: float, imag: float) -> float:
         """
-        Compute bridge voltage.
+        Compute impedance angle.
         
         Args:
-            reference_impedance: Reference
-            measured_impedance: Measured
-            excitation_V: Excitation
+            real: Real
+            imag: Imaginary
         
         Returns:
-            Voltage
+            Angle in degrees
         """
-        delta = measured_impedance - reference_impedance
-        return delta * excitation_V / reference_impedance
+        return math.degrees(math.atan2(imag, real))
+    
+    def magnitude(self, real: float, imag: float) -> float:
+        """
+        Compute magnitude.
+        
+        Args:
+            real: Real
+            imag: Imaginary
+        
+        Returns:
+            Magnitude
+        """
+        return math.sqrt(real**2 + imag**2)
+    
+    def trajectory(self, readings: List[Tuple[float, float]]) -> Dict:
+        """
+        Analyze trajectory.
+        
+        Args:
+            readings: (real, imag) readings
+        
+        Returns:
+            Analysis
+        """
+        if not readings:
+            return {}
+        
+        angles = [self.angle(r, i) for r, i in readings]
+        mags = [self.magnitude(r, i) for r, i in readings]
+        
+        return {
+            "start_angle": angles[0],
+            "end_angle": angles[-1],
+            "angle_span": angles[-1] - angles[0],
+            "max_magnitude": max(mags),
+            "min_magnitude": min(mags),
+            "readings": len(readings)
+        }
 
 
-class ECAArray:
+class LiftOffCompensator:
     """
-    Eddy current array controller.
+    Compensate for lift-off effects.
     """
     
-    def __init__(self, num_probes: int = 16,
-                 spacing_mm: float = 2.0):
-        """
-        Args:
-            num_probes: Number of probes
-            spacing_mm: Probe spacing
-        """
-        self.num_probes = num_probes
-        self.spacing = spacing_mm
-        self.probes: List[ECAProbe] = []
-        self._build_array()
+    def __init__(self):
+        self.lift_off_curve: List[Tuple[float, float]] = []
     
-    def _build_array(self):
-        """Initialize probe array."""
-        for i in range(self.num_probes):
-            pos = (i * self.spacing, 0.0)
-            self.probes.append(ECAProbe(i, pos))
-    
-    def scan_line(self, conductivities: List[float],
-                 lift_offs: List[float]) -> List[ECAReading]:
+    def calibrate(self, lift_offs: List[float],
+                 real_vals: List[float],
+                 imag_vals: List[float]):
         """
-        Simulate linear scan.
+        Calibrate lift-off curve.
         
         Args:
-            conductivities: Conductivity per probe
-            lift_offs: Lift-off per probe
+            lift_offs: Lift-off values
+            real_vals: Real impedance
+            imag_vals: Imaginary impedance
+        """
+        self.lift_off_curve = list(zip(lift_offs, real_vals, imag_vals))
+    
+    def compensate(self, real: float, imag: float,
+                  actual_lift_off: float) -> Tuple[float, float]:
+        """
+        Compensate reading.
+        
+        Args:
+            real: Real impedance
+            imag: Imaginary impedance
+            actual_lift_off: Actual lift-off
         
         Returns:
-            Readings
+            Compensated (real, imag)
+        """
+        if not self.lift_off_curve:
+            return (real, imag)
+        
+        # Find closest calibration point
+        closest = min(self.lift_off_curve, key=lambda x: abs(x[0] - actual_lift_off))
+        _, ref_real, ref_imag = closest
+        
+        # Subtract lift-off effect
+        return (real - ref_real, imag - ref_imag)
+
+
+class DefectClassifier:
+    """
+    Classify defects from ECA signals.
+    """
+    
+    def __init__(self):
+        self.threshold_angle = 30.0
+    
+    def classify(self, angle_change: float,
+                magnitude_change: float) -> str:
+        """
+        Classify defect.
+        
+        Args:
+            angle_change: Angle change
+            magnitude_change: Magnitude change
+        
+        Returns:
+            Classification
+        """
+        if abs(angle_change) < self.threshold_angle and magnitude_change > 0.1:
+            return "lift_off"
+        elif angle_change > self.threshold_angle:
+            return "crack"
+        elif angle_change < -self.threshold_angle:
+            return "corrosion"
+        elif abs(magnitude_change) < 0.05:
+            return "noise"
+        else:
+            return "unknown"
+    
+    def classify_trajectory(self, trajectory: List[Tuple[float, float]]) -> str:
+        """
+        Classify from trajectory.
+        
+        Args:
+            trajectory: (real, imag) points
+        
+        Returns:
+            Classification
+        """
+        if len(trajectory) < 2:
+            return "unknown"
+        
+        analyzer = ImpedancePlaneAnalyzer()
+        start_angle = analyzer.angle(*trajectory[0])
+        end_angle = analyzer.angle(*trajectory[-1])
+        angle_change = end_angle - start_angle
+        
+        start_mag = analyzer.magnitude(*trajectory[0])
+        end_mag = analyzer.magnitude(*trajectory[-1])
+        magnitude_change = (end_mag - start_mag) / max(start_mag, 1e-10)
+        
+        return self.classify(angle_change, magnitude_change)
+
+
+class ECAProbeSimulator:
+    """
+    Simulate ECA probe response.
+    """
+    
+    def __init__(self, coil: CoilConfig):
+        """
+        Args:
+            coil: Coil config
+        """
+        self.coil = coil
+    
+    def impedance(self, conductivity: float = 1.0,
+                 permeability: float = 1.0) -> Tuple[float, float]:
+        """
+        Compute coil impedance.
+        
+        Args:
+            conductivity: Material conductivity
+            permeability: Material permeability
+        
+        Returns:
+            (real, imag)
+        """
+        omega = 2.0 * math.pi * self.coil.frequency_Hz
+        L = self.coil.turns ** 2 * permeability * math.pi * (self.coil.diameter_mm / 2000.0) ** 2
+        R = 1.0 + conductivity * omega * self.coil.lift_off_mm * 1e-3
+        
+        real = R
+        imag = omega * L
+        
+        return (real, imag)
+    
+    def scan_response(self, positions: List[float],
+                     defect_depth: float = 0.0) -> List[Tuple[float, float]]:
+        """
+        Simulate scan over defect.
+        
+        Args:
+            positions: Probe positions
+            defect_depth: Defect depth
+        
+        Returns:
+            Impedance readings
         """
         readings = []
-        ref = self.probes[0].impedance(1.0, 0.0)
+        base_real, base_imag = self.impedance()
         
-        for i, probe in enumerate(self.probes):
-            cond = conductivities[i] if i < len(conductivities) else 1.0
-            lo = lift_offs[i] if i < len(lift_offs) else 0.0
+        for pos in positions:
+            # Defect response: Gaussian perturbation
+            perturbation = math.exp(-(pos ** 2) / (2.0 * (defect_depth + 1.0) ** 2))
             
-            z = probe.impedance(cond, lo)
-            v = probe.voltage(ref, z)
+            real = base_real + perturbation * 0.1 * base_real
+            imag = base_imag + perturbation * 0.2 * base_imag
             
-            readings.append(ECAReading(
-                probe_id=probe.probe_id,
-                x_mm=probe.position[0],
-                y_mm=probe.position[1],
-                real_mV=v.real * 1000.0,
-                imag_mV=v.imag * 1000.0,
-                lift_off_mm=lo
-            ))
+            readings.append((real, imag))
         
         return readings
-    
-    def coverage_width_mm(self) -> float:
-        """
-        Compute scan coverage.
-        
-        Returns:
-            Width in mm
-        """
-        return (self.num_probes - 1) * self.spacing
-
-
-class CScanImager:
-    """
-    C-scan image generation from ECA data.
-    """
-    
-    def __init__(self, array: ECAArray):
-        """
-        Args:
-            array: ECA array
-        """
-        self.array = array
-        self.scan_data: List[List[ECAReading]] = []
-    
-    def add_scan_line(self, readings: List[ECAReading]):
-        """
-        Add scan line.
-        
-        Args:
-            readings: Line readings
-        """
-        self.scan_data.append(readings)
-    
-    def amplitude_map(self) -> List[List[float]]:
-        """
-        Generate amplitude C-scan.
-        
-        Returns:
-            2D amplitude map
-        """
-        if not self.scan_data:
-            return []
-        
-        h = len(self.scan_data)
-        w = self.array.num_probes
-        
-        amplitude = []
-        for y in range(h):
-            row = []
-            for x in range(w):
-                if x < len(self.scan_data[y]):
-                    r = self.scan_data[y][x]
-                    row.append(math.sqrt(r.real_mV**2 + r.imag_mV**2))
-                else:
-                    row.append(0.0)
-            amplitude.append(row)
-        
-        return amplitude
-    
-    def phase_map(self) -> List[List[float]]:
-        """
-        Generate phase C-scan.
-        
-        Returns:
-            2D phase map
-        """
-        if not self.scan_data:
-            return []
-        
-        h = len(self.scan_data)
-        w = self.array.num_probes
-        
-        phase = []
-        for y in range(h):
-            row = []
-            for x in range(w):
-                if x < len(self.scan_data[y]):
-                    r = self.scan_data[y][x]
-                    row.append(math.atan2(r.imag_mV, r.real_mV))
-                else:
-                    row.append(0.0)
-            phase.append(row)
-        
-        return phase
-    
-    def defect_map(self, threshold_mV: float = 10.0) -> List[List[bool]]:
-        """
-        Generate defect map.
-        
-        Args:
-            threshold_mV: Detection threshold
-        
-        Returns:
-            Defect boolean map
-        """
-        amp = self.amplitude_map()
-        return [[val > threshold_mV for val in row] for row in amp]
-
-
-class ECADefectMapper:
-    """
-    Defect characterization from ECA data.
-    """
-    
-    def defect_depth_estimate(self, amplitude_mV: float,
-                           reference_amplitude_mV: float = 50.0,
-                           skin_depth_mm: float = 1.0) -> float:
-        """
-        Estimate defect depth from amplitude.
-        
-        Args:
-            amplitude_mV: Signal amplitude
-            reference_amplitude_mV: Reference
-            skin_depth_mm: Skin depth
-        
-        Returns:
-            Depth in mm
-        """
-        if reference_amplitude_mV <= 0 or amplitude_mV <= 0:
-            return 0.0
-        ratio = amplitude_mV / reference_amplitude_mV
-        if ratio >= 1.0:
-            return 0.0
-        return -skin_depth_mm * math.log(ratio)
-    
-    def defect_length_estimate(self, defect_pixels: int,
-                              pixel_size_mm: float = 2.0) -> float:
-        """
-        Estimate defect length.
-        
-        Args:
-            defect_pixels: Pixel count
-            pixel_size_mm: Pixel size
-        
-        Returns:
-            Length in mm
-        """
-        return defect_pixels * pixel_size_mm
-    
-    def severity_index(self, amplitude_mV: float,
-                      depth_mm: float,
-                      length_mm: float) -> float:
-        """
-        Compute severity index.
-        
-        Args:
-            amplitude_mV: Amplitude
-            depth_mm: Depth
-            length_mm: Length
-        
-        Returns:
-            Severity (0-1)
-        """
-        amp_norm = min(1.0, amplitude_mV / 100.0)
-        depth_norm = min(1.0, depth_mm / 5.0)
-        length_norm = min(1.0, length_mm / 20.0)
-        return (amp_norm + depth_norm + length_norm) / 3.0
 
 
 class EddyCurrentArray:
@@ -302,70 +265,45 @@ class EddyCurrentArray:
     Unified eddy current array controller.
     """
     
-    def __init__(self, num_probes: int = 16):
-        """
-        Args:
-            num_probes: Number of probes
-        """
-        self.array = ECAArray(num_probes)
-        self.imager = CScanImager(self.array)
-        self.mapper = ECADefectMapper()
+    def __init__(self):
+        self.coil = CoilConfig(3.0, 50, 100000.0)
+        self.simulator = ECAProbeSimulator(self.coil)
+        self.analyzer = ImpedancePlaneAnalyzer()
+        self.compensator = LiftOffCompensator()
+        self.classifier = DefectClassifier()
+        self.readings: List[Tuple[float, float]] = []
         self.defects: List[Dict] = []
     
-    def scan(self, conductivity_profile: List[List[float]],
-            lift_off_profile: List[List[float]]):
+    def scan(self, positions: List[float],
+            defect_depth: float = 0.0):
         """
-        Run full scan.
+        Perform scan.
         
         Args:
-            conductivity_profile: 2D conductivity map
-            lift_off_profile: 2D lift-off map
+            positions: Positions
+            defect_depth: Defect depth
         """
-        for y in range(len(conductivity_profile)):
-            conds = conductivity_profile[y]
-            los = lift_off_profile[y] if y < len(lift_off_profile) else [0.0] * self.array.num_probes
-            readings = self.array.scan_line(conds, los)
-            self.imager.add_scan_line(readings)
+        self.readings = self.simulator.scan_response(positions, defect_depth)
     
-    def analyze_defects(self, threshold_mV: float = 10.0) -> List[Dict]:
+    def analyze(self) -> Dict:
         """
-        Analyze defects.
-        
-        Args:
-            threshold_mV: Threshold
+        Analyze readings.
         
         Returns:
-            Defect list
+            Analysis
         """
-        defect_map = self.imager.defect_map(threshold_mV)
-        amp_map = self.imager.amplitude_map()
+        traj = self.analyzer.trajectory(self.readings)
+        classification = self.classifier.classify_trajectory(self.readings)
         
-        for y, row in enumerate(defect_map):
-            for x, is_defect in enumerate(row):
-                if is_defect:
-                    amp = amp_map[y][x] if y < len(amp_map) and x < len(amp_map[y]) else 0.0
-                    depth = self.mapper.defect_depth_estimate(amp)
-                    severity = self.mapper.severity_index(amp, depth, self.array.spacing)
-                    self.defects.append({
-                        "x_mm": x * self.array.spacing,
-                        "y_mm": y * self.array.spacing,
-                        "amplitude_mV": amp,
-                        "depth_mm": depth,
-                        "severity": severity
-                    })
-        
-        return self.defects
-    
-    def cscan_summary(self) -> Dict:
-        """Get C-scan summary."""
-        amp_map = self.imager.amplitude_map()
-        if not amp_map:
-            return {"status": "no_data"}
-        
-        max_amp = max(max(row) for row in amp_map)
         return {
-            "scan_lines": len(self.imager.scan_data),
-            "coverage_mm": self.array.coverage_width_mm(),
-            "max_amplitude_mV": max_amp,
-            "defects": len(self.defects)
+            **traj,
+            "classification": classification
+        }
+    
+    def eca_summary(self) -> Dict:
+        """Get summary."""
+        return {
+            "coil_diameter_mm": self.coil.diameter_mm,
+            "frequency_Hz": self.coil.frequency_Hz,
+            "readings": len(self.readings)
         }

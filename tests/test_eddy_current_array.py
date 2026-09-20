@@ -8,141 +8,128 @@ import os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from eddy_current_array import (ProbeOrientation, ECAReading,
-                                 ECAProbe, ECAArray,
-                                 CScanImager, ECADefectMapper,
-                                 EddyCurrentArray)
+from eddy_current_array import (CoilConfig, ImpedancePlaneAnalyzer,
+                                 LiftOffCompensator, DefectClassifier,
+                                 ECAProbeSimulator, EddyCurrentArray)
 
 
-class TestECAProbe(unittest.TestCase):
-    """Test ECA probe."""
+class TestImpedancePlaneAnalyzer(unittest.TestCase):
+    """Test impedance plane."""
     
     def setUp(self):
-        self.probe = ECAProbe(0, (0.0, 0.0), 100000.0)
+        self.ipa = ImpedancePlaneAnalyzer()
+    
+    def test_normalize(self):
+        """Should normalize."""
+        r, i = self.ipa.normalize(2.0, 4.0, 1.0, 2.0)
+        self.assertAlmostEqual(r, 2.0)
+        self.assertAlmostEqual(i, 2.0)
+        print("  [PASS] Norm")
+    
+    def test_angle(self):
+        """Should compute angle."""
+        a = self.ipa.angle(1.0, 1.0)
+        self.assertAlmostEqual(a, 45.0, places=5)
+        print(f"  [PASS] Angle: {a:.2f}")
+    
+    def test_magnitude(self):
+        """Should compute magnitude."""
+        m = self.ipa.magnitude(3.0, 4.0)
+        self.assertAlmostEqual(m, 5.0, places=5)
+        print(f"  [PASS] Mag: {m}")
+    
+    def test_trajectory(self):
+        """Should analyze trajectory."""
+        readings = [(1.0, 0.0), (2.0, 1.0), (3.0, 2.0)]
+        t = self.ipa.trajectory(readings)
+        self.assertIn("start_angle", t)
+        print(f"  [PASS] Traj: {t}")
+
+
+class TestLiftOffCompensator(unittest.TestCase):
+    """Test lift-off."""
+    
+    def setUp(self):
+        self.loc = LiftOffCompensator()
+    
+    def test_calibrate(self):
+        """Should calibrate."""
+        self.loc.calibrate([0.0, 0.5, 1.0], [1.0, 1.1, 1.2], [0.0, 0.1, 0.2])
+        self.assertEqual(len(self.loc.lift_off_curve), 3)
+        print("  [PASS] Cal")
+    
+    def test_compensate(self):
+        """Should compensate."""
+        self.loc.calibrate([0.0, 1.0], [1.0, 1.2], [0.0, 0.2])
+        r, i = self.loc.compensate(2.2, 0.3, 1.0)
+        self.assertAlmostEqual(r, 1.0, places=5)
+        print(f"  [PASS] Comp: ({r:.2f}, {i:.2f})")
+
+
+class TestDefectClassifier(unittest.TestCase):
+    """Test classifier."""
+    
+    def setUp(self):
+        self.dc = DefectClassifier()
+    
+    def test_classify(self):
+        """Should classify."""
+        c = self.dc.classify(45.0, 0.2)
+        self.assertIn(c, ["crack", "corrosion", "lift_off", "noise", "unknown"])
+        print(f"  [PASS] Class: {c}")
+    
+    def test_trajectory(self):
+        """Should classify trajectory."""
+        traj = [(1.0, 0.0), (2.0, 2.0)]
+        c = self.dc.classify_trajectory(traj)
+        self.assertIn(c, ["crack", "corrosion", "lift_off", "noise", "unknown"])
+        print(f"  [PASS] Traj: {c}")
+
+
+class TestECAProbeSimulator(unittest.TestCase):
+    """Test simulator."""
+    
+    def setUp(self):
+        self.sim = ECAProbeSimulator(CoilConfig(3.0, 50, 100000.0))
     
     def test_impedance(self):
         """Should compute impedance."""
-        z = self.probe.impedance(1.0, 0.0)
-        self.assertNotEqual(z.real, 0)
-        print(f"  [PASS] Z: {z}")
-    
-    def test_voltage(self):
-        """Should compute voltage."""
-        ref = self.probe.impedance(1.0, 0.0)
-        z = self.probe.impedance(2.0, 0.0)
-        v = self.probe.voltage(ref, z)
-        self.assertNotEqual(v.real, 0)
-        print(f"  [PASS] V: {v}")
-    
-    def test_lift_off_effect(self):
-        """Should decrease with lift-off."""
-        z0 = self.probe.impedance(1.0, 0.0)
-        z1 = self.probe.impedance(1.0, 1.0)
-        self.assertLess(abs(z1), abs(z0))
-        print(f"  [PASS] LO: |z0|={abs(z0):.2f} |z1|={abs(z1):.2f}")
-
-
-class TestECAArray(unittest.TestCase):
-    """Test ECA array."""
-    
-    def setUp(self):
-        self.array = ECAArray(8)
+        r, i = self.sim.impedance()
+        self.assertGreater(r, 0)
+        self.assertGreater(i, 0)
+        print(f"  [PASS] Z: ({r:.4f}, {i:.4f})")
     
     def test_scan(self):
-        """Should scan."""
-        conds = [1.0] * 8
-        los = [0.0] * 8
-        readings = self.array.scan_line(conds, los)
-        self.assertEqual(len(readings), 8)
-        print(f"  [PASS] Scan: {len(readings)} readings")
-    
-    def test_coverage(self):
-        """Should compute coverage."""
-        w = self.array.coverage_width_mm()
-        self.assertGreater(w, 0)
-        print(f"  [PASS] Cov: {w:.1f} mm")
-
-
-class TestCScanImager(unittest.TestCase):
-    """Test C-scan imager."""
-    
-    def setUp(self):
-        self.array = ECAArray(4)
-        self.imager = CScanImager(self.array)
-    
-    def test_amplitude(self):
-        """Should generate amplitude map."""
-        readings = self.array.scan_line([1.0]*4, [0.0]*4)
-        self.imager.add_scan_line(readings)
-        amp = self.imager.amplitude_map()
-        self.assertEqual(len(amp), 1)
-        print(f"  [PASS] Amp: {amp[0]}")
-    
-    def test_phase(self):
-        """Should generate phase map."""
-        readings = self.array.scan_line([1.0]*4, [0.0]*4)
-        self.imager.add_scan_line(readings)
-        ph = self.imager.phase_map()
-        self.assertEqual(len(ph), 1)
-        print(f"  [PASS] Phase: {ph[0]}")
-    
-    def test_defect(self):
-        """Should generate defect map."""
-        readings = self.array.scan_line([5.0]*4, [0.0]*4)
-        self.imager.add_scan_line(readings)
-        dm = self.imager.defect_map(1.0)
-        self.assertEqual(len(dm), 1)
-        print(f"  [PASS] Defect: {dm[0]}")
-
-
-class TestECADefectMapper(unittest.TestCase):
-    """Test defect mapper."""
-    
-    def setUp(self):
-        self.mapper = ECADefectMapper()
-    
-    def test_depth(self):
-        """Should estimate depth."""
-        d = self.mapper.defect_depth_estimate(30.0, 50.0, 1.0)
-        self.assertGreater(d, 0)
-        print(f"  [PASS] Depth: {d:.4f} mm")
-    
-    def test_length(self):
-        """Should estimate length."""
-        l = self.mapper.defect_length_estimate(5, 2.0)
-        self.assertEqual(l, 10.0)
-        print(f"  [PASS] Len: {l}")
-    
-    def test_severity(self):
-        """Should compute severity."""
-        s = self.mapper.severity_index(50.0, 2.0, 10.0)
-        self.assertGreater(s, 0)
-        print(f"  [PASS] Sev: {s:.4f}")
+        """Should simulate scan."""
+        readings = self.sim.scan_response([-2.0, -1.0, 0.0, 1.0, 2.0], 1.0)
+        self.assertEqual(len(readings), 5)
+        print("  [PASS] Scan")
 
 
 class TestEddyCurrentArray(unittest.TestCase):
     """Test unified controller."""
     
     def setUp(self):
-        self.eca = EddyCurrentArray(4)
+        self.eca = EddyCurrentArray()
     
     def test_scan(self):
-        """Should full scan."""
-        cond = [[1.0]*4 for _ in range(3)]
-        lo = [[0.0]*4 for _ in range(3)]
-        self.eca.scan(cond, lo)
-        s = self.eca.cscan_summary()
-        self.assertIn("scan_lines", s)
-        print(f"  [PASS] Scan: {s}")
+        """Should scan."""
+        self.eca.scan([-1.0, 0.0, 1.0], 1.0)
+        self.assertEqual(len(self.eca.readings), 3)
+        print("  [PASS] Scan")
     
     def test_analyze(self):
         """Should analyze."""
-        cond = [[5.0]*4 for _ in range(3)]
-        lo = [[0.0]*4 for _ in range(3)]
-        self.eca.scan(cond, lo)
-        defects = self.eca.analyze_defects(1.0)
-        self.assertIsInstance(defects, list)
-        print(f"  [PASS] Ana: {len(defects)} defects")
+        self.eca.scan([-2.0, 0.0, 2.0], 1.0)
+        a = self.eca.analyze()
+        self.assertIn("classification", a)
+        print(f"  [PASS] Anlz: {a}")
+    
+    def test_summary(self):
+        """Should summarize."""
+        s = self.eca.eca_summary()
+        self.assertIn("frequency_Hz", s)
+        print(f"  [PASS] Sum: {s}")
 
 
 if __name__ == '__main__':
