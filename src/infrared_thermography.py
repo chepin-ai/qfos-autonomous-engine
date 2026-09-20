@@ -1,299 +1,291 @@
 """
 Infrared Thermography Module
-Thermal NDT with emissivity correction, thermal contrast analysis,
-lock-in thermography, and defect detection for autonomous inspection.
+Thermal image capture, emissivity correction, hotspot detection,
+and temperature trend analysis for autonomous NDT.
 """
 
 import math
 from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass
-from enum import Enum
-
-
-class ThermalMode(Enum):
-    """Thermography modes."""
-    PULSE = "pulse"
-    LOCK_IN = "lock_in"
-    STEP_HEATING = "step_heating"
 
 
 @dataclass
 class ThermalPixel:
-    """Single thermal pixel reading."""
-    x_mm: float
-    y_mm: float
+    """Thermal pixel data."""
+    x: int
+    y: int
     temperature_C: float
-    emissivity: float = 0.95
-    reflectance: float = 0.05
+    emissivity: float
 
 
 class EmissivityCorrector:
     """
-    Emissivity correction for IR measurements.
+    Correct temperature for emissivity.
     """
     
-    def __init__(self):
-        self.reflected_temp_C = 25.0
-    
-    def correct_temperature(self, measured_temp_C: float,
-                           emissivity: float,
-                           reflected_temp_C: Optional[float] = None) -> float:
+    def __init__(self, ambient_temp_C: float = 25.0):
         """
-        Correct measured temperature for emissivity.
+        Args:
+            ambient_temp_C: Ambient temperature
+        """
+        self.T_ambient = ambient_temp_C
+    
+    def correct(self, measured_temp_C: float,
+               emissivity: float,
+               reflected_temp_C: Optional[float] = None) -> float:
+        """
+        Correct temperature.
         
         Args:
-            measured_temp_C: Apparent temperature
-            emissivity: Surface emissivity
-            reflected_temp_C: Reflected temperature
-        
-        Returns:
-            True temperature
-        """
-        t_ref = reflected_temp_C if reflected_temp_C is not None else self.reflected_temp_C
-        # Stefan-Boltzmann simplified correction
-        # T_true^4 = (T_meas^4 - (1-eps)*T_ref^4) / eps
-        t_meas_K = measured_temp_C + 273.15
-        t_ref_K = t_ref + 273.15
-        
-        t_true_K4 = (t_meas_K**4 - (1.0 - emissivity) * t_ref_K**4) / emissivity
-        t_true_K = max(0.0, t_true_K4 ** 0.25)
-        return t_true_K - 273.15
-    
-    def estimate_emissivity(self, true_temp_C: float,
-                           measured_temp_C: float,
-                           reflected_temp_C: float = 25.0) -> float:
-        """
-        Estimate emissivity from temperatures.
-        
-        Args:
-            true_temp_C: True temperature
             measured_temp_C: Measured
-            reflected_temp_C: Reflected
+            emissivity: Emissivity (0-1)
+            reflected_temp_C: Reflected temp
         
         Returns:
-            Emissivity
+            Corrected temperature
         """
-        t_true_K = true_temp_C + 273.15
-        t_meas_K = measured_temp_C + 273.15
-        t_ref_K = reflected_temp_C + 273.15
+        if emissivity <= 0 or emissivity > 1.0:
+            return measured_temp_C
         
-        num = t_meas_K**4 - t_ref_K**4
-        den = t_true_K**4 - t_ref_K**4
+        T_ref = reflected_temp_C if reflected_temp_C is not None else self.T_ambient
         
-        if abs(den) < 1e-10:
-            return 0.95
+        # Stefan-Boltzmann correction approximation
+        T_meas_K = measured_temp_C + 273.15
+        T_ref_K = T_ref + 273.15
         
-        eps = num / den
-        return max(0.1, min(1.0, eps))
+        # True radiance = (measured - (1-eps)*reflected) / eps
+        T_true_K = ((T_meas_K**4 - (1.0 - emissivity) * T_ref_K**4) / emissivity) ** 0.25
+        
+        return T_true_K - 273.15
+    
+    def correct_image(self, pixels: List[ThermalPixel]) -> List[ThermalPixel]:
+        """
+        Correct entire image.
+        
+        Args:
+            pixels: Pixels
+        
+        Returns:
+            Corrected pixels
+        """
+        corrected = []
+        for p in pixels:
+            t = self.correct(p.temperature_C, p.emissivity)
+            corrected.append(ThermalPixel(p.x, p.y, t, p.emissivity))
+        return corrected
 
 
-class ThermalContrastAnalyzer:
+class HotspotDetector:
     """
-    Thermal contrast analysis for defect detection.
+    Detect thermal hotspots.
     """
     
-    def __init__(self):
-        self.background_temp_C = 25.0
-    
-    def contrast(self, defect_temp_C: float,
-                background_temp_C: Optional[float] = None) -> float:
+    def __init__(self, threshold_delta_C: float = 10.0):
         """
-        Compute thermal contrast.
+        Args:
+            threshold_delta_C: Threshold above average
+        """
+        self.threshold = threshold_delta_C
+    
+    def detect(self, temperatures_C: List[float],
+              width: int, height: int) -> List[Dict]:
+        """
+        Detect hotspots.
         
         Args:
-            defect_temp_C: Defect temperature
-            background_temp_C: Background
+            temperatures_C: Temperature array
+            width: Image width
+            height: Image height
         
         Returns:
-            Contrast (delta T)
+            Hotspot regions
         """
-        bg = background_temp_C if background_temp_C is not None else self.background_temp_C
-        return defect_temp_C - bg
-    
-    def contrast_ratio(self, defect_temp_C: float,
-                      background_temp_C: Optional[float] = None) -> float:
-        """
-        Compute contrast ratio.
-        
-        Args:
-            defect_temp_C: Defect
-            background_temp_C: Background
-        
-        Returns:
-            Ratio
-        """
-        bg = background_temp_C if background_temp_C is not None else self.background_temp_C
-        if abs(bg) < 1e-10:
-            return 0.0
-        return (defect_temp_C - bg) / bg
-    
-    def defect_map(self, thermal_image: List[List[float]],
-                  threshold_C: float = 2.0) -> List[List[bool]]:
-        """
-        Generate defect map from thermal image.
-        
-        Args:
-            thermal_image: Temperature map
-            threshold_C: Detection threshold
-        
-        Returns:
-            Boolean defect map
-        """
-        if not thermal_image:
+        if not temperatures_C:
             return []
         
-        # Compute background
-        flat = [v for row in thermal_image for v in row]
-        bg = sum(flat) / len(flat) if flat else 25.0
+        avg_temp = sum(temperatures_C) / len(temperatures_C)
+        hotspots = []
+        visited = set()
         
-        return [[abs(v - bg) > threshold_C for v in row] for row in thermal_image]
+        for i, t in enumerate(temperatures_C):
+            if i in visited:
+                continue
+            
+            if t - avg_temp > self.threshold:
+                # Find connected region
+                region = self._flood_fill(temperatures_C, width, height,
+                                         i, avg_temp, visited)
+                if region:
+                    temps = [temperatures_C[idx] for idx in region]
+                    hotspots.append({
+                        "size": len(region),
+                        "max_temp_C": max(temps),
+                        "avg_temp_C": sum(temps) / len(temps),
+                        "center": self._center(region, width)
+                    })
+        
+        return hotspots
+    
+    def _flood_fill(self, temps: List[float], w: int, h: int,
+                   start: int, avg: float, visited: set) -> List[int]:
+        """Flood fill connected hotspot."""
+        region = []
+        stack = [start]
+        
+        while stack:
+            idx = stack.pop()
+            if idx in visited or idx < 0 or idx >= len(temps):
+                continue
+            
+            if temps[idx] - avg <= self.threshold:
+                continue
+            
+            visited.add(idx)
+            region.append(idx)
+            
+            # Add neighbors
+            x = idx % w
+            y = idx // w
+            
+            for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                nx, ny = x + dx, y + dy
+                if 0 <= nx < w and 0 <= ny < h:
+                    stack.append(ny * w + nx)
+        
+        return region
+    
+    def _center(self, region: List[int], width: int) -> Tuple[int, int]:
+        """Compute region center."""
+        xs = [idx % width for idx in region]
+        ys = [idx // width for idx in region]
+        return (int(sum(xs) / len(xs)), int(sum(ys) / len(ys)))
 
 
-class LockInThermography:
+class TemperatureTrendAnalyzer:
     """
-    Lock-in thermography signal processing.
+    Analyze temperature trends over time.
     """
     
-    def __init__(self, modulation_frequency_Hz: float = 0.1):
-        """
-        Args:
-            modulation_frequency_Hz: Modulation frequency
-        """
-        self.freq = modulation_frequency_Hz
-        self.period_s = 1.0 / modulation_frequency_Hz
+    def __init__(self):
+        self.history: List[Dict] = []
     
-    def demodulate(self, signal: List[Tuple[float, float]]) -> Tuple[float, float]:
+    def add_measurement(self, timestamp: float,
+                       temperatures_C: List[float]):
         """
-        Demodulate lock-in signal.
+        Add measurement.
         
         Args:
-            signal: (time_s, amplitude) pairs
+            timestamp: Time
+            temperatures_C: Temperatures
+        """
+        if temperatures_C:
+            self.history.append({
+                "time": timestamp,
+                "max": max(temperatures_C),
+                "min": min(temperatures_C),
+                "mean": sum(temperatures_C) / len(temperatures_C)
+            })
+    
+    def trend_slope(self) -> float:
+        """
+        Compute mean temperature trend slope.
         
         Returns:
-            (in_phase, quadrature)
+            Slope (C per time unit)
         """
-        x_sum = 0.0
-        y_sum = 0.0
+        if len(self.history) < 2:
+            return 0.0
         
-        for t, amp in signal:
-            x_sum += amp * math.cos(2.0 * math.pi * self.freq * t)
-            y_sum += amp * math.sin(2.0 * math.pi * self.freq * t)
+        n = len(self.history)
+        sum_t = sum(h["time"] for h in self.history)
+        sum_m = sum(h["mean"] for h in self.history)
+        sum_tt = sum(h["time"]**2 for h in self.history)
+        sum_tm = sum(h["time"] * h["mean"] for h in self.history)
         
-        n = len(signal)
-        if n == 0:
-            return (0.0, 0.0)
+        denom = n * sum_tt - sum_t**2
+        if denom == 0:
+            return 0.0
         
-        return (2.0 * x_sum / n, 2.0 * y_sum / n)
+        return (n * sum_tm - sum_t * sum_m) / denom
     
-    def amplitude(self, in_phase: float, quadrature: float) -> float:
+    def is_overheating(self, threshold_slope: float = 0.5) -> bool:
         """
-        Compute amplitude from quadrature.
+        Check if overheating.
         
         Args:
-            in_phase: In-phase component
-            quadrature: Quadrature component
+            threshold_slope: Threshold
         
         Returns:
-            Amplitude
+            True if overheating
         """
-        return math.sqrt(in_phase**2 + quadrature**2)
-    
-    def phase(self, in_phase: float, quadrature: float) -> float:
-        """
-        Compute phase.
-        
-        Args:
-            in_phase: In-phase
-            quadrature: Quadrature
-        
-        Returns:
-            Phase in radians
-        """
-        return math.atan2(quadrature, in_phase)
-    
-    def thermal_diffusion_length_mm(self,
-                                   thermal_diffusivity_mm2_s: float = 10.0) -> float:
-        """
-        Compute thermal diffusion length.
-        
-        Args:
-            thermal_diffusivity_mm2_s: Thermal diffusivity
-        
-        Returns:
-            Diffusion length in mm
-        """
-        return math.sqrt(thermal_diffusivity_mm2_s / (math.pi * self.freq))
+        return self.trend_slope() > threshold_slope
 
 
 class InfraredThermography:
     """
-    Unified infrared thermography controller.
+    Unified IR thermography controller.
     """
     
-    def __init__(self):
-        self.corrector = EmissivityCorrector()
-        self.contrast = ThermalContrastAnalyzer()
-        self.lockin = LockInThermography()
-        self.thermal_images: List[List[List[float]]] = []
-        self.defects: List[Dict] = []
+    def __init__(self, ambient_temp_C: float = 25.0):
+        self.corrector = EmissivityCorrector(ambient_temp_C)
+        self.detector = HotspotDetector()
+        self.trend = TemperatureTrendAnalyzer()
+        self.pixels: List[ThermalPixel] = []
     
-    def capture(self, thermal_image_C: List[List[float]],
-               emissivity_map: Optional[List[List[float]]] = None):
+    def capture(self, temperatures_C: List[float],
+               emissivities: List[float],
+               width: int, height: int):
         """
         Capture thermal image.
         
         Args:
-            thermal_image_C: Raw thermal image
-            emissivity_map: Emissivity per pixel
+            temperatures_C: Raw temps
+            emissivities: Emissivities
+            width: Width
+            height: Height
         """
-        if emissivity_map:
-            corrected = []
-            for y, row in enumerate(thermal_image_C):
-                corrected_row = []
-                for x, temp in enumerate(row):
-                    eps = emissivity_map[y][x] if y < len(emissivity_map) and x < len(emissivity_map[y]) else 0.95
-                    corrected_row.append(self.corrector.correct_temperature(temp, eps))
-                corrected.append(corrected_row)
-            self.thermal_images.append(corrected)
-        else:
-            self.thermal_images.append(thermal_image_C)
+        self.pixels = []
+        for i, (t, e) in enumerate(zip(temperatures_C, emissivities)):
+            x = i % width
+            y = i // width
+            self.pixels.append(ThermalPixel(x, y, t, e))
     
-    def detect_defects(self, threshold_C: float = 2.0) -> List[Dict]:
+    def inspect(self) -> Dict:
         """
-        Detect defects in latest image.
-        
-        Args:
-            threshold_C: Threshold
+        Inspect for defects.
         
         Returns:
-            Defect list
+            Results
         """
-        if not self.thermal_images:
-            return []
+        corrected = self.corrector.correct_image(self.pixels)
+        temps = [p.temperature_C for p in corrected]
         
-        latest = self.thermal_images[-1]
-        defect_map = self.contrast.defect_map(latest, threshold_C)
+        w = max(p.x for p in corrected) + 1 if corrected else 1
+        h = max(p.y for p in corrected) + 1 if corrected else 1
         
-        h = len(defect_map)
-        w = len(defect_map[0]) if h > 0 else 0
+        hotspots = self.detector.detect(temps, w, h)
         
-        for y in range(h):
-            for x in range(w):
-                if defect_map[y][x]:
-                    self.defects.append({
-                        "x": x,
-                        "y": y,
-                        "temperature_C": latest[y][x],
-                        "contrast_C": self.contrast.contrast(latest[y][x])
-                    })
-        
-        return self.defects
+        return {
+            "hotspots": len(hotspots),
+            "max_temp_C": max(temps) if temps else 0.0,
+            "avg_temp_C": sum(temps) / len(temps) if temps else 0.0,
+            "regions": hotspots[:3]
+        }
     
-    def thermography_summary(self) -> Dict:
+    def add_timepoint(self, timestamp: float):
+        """
+        Add timepoint for trend analysis.
+        
+        Args:
+            timestamp: Time
+        """
+        temps = [p.temperature_C for p in self.pixels]
+        self.trend.add_measurement(timestamp, temps)
+    
+    def ir_summary(self) -> Dict:
         """Get summary."""
         return {
-            "images": len(self.thermal_images),
-            "defects": len(self.defects),
-            "lockin_freq_Hz": self.lockin.freq,
-            "diffusion_length_mm": self.lockin.thermal_diffusion_length_mm()
+            "pixels": len(self.pixels),
+            "hotspots": 0,
+            "trend_slope": self.trend.trend_slope()
         }

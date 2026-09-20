@@ -5,123 +5,124 @@ Unit tests for infrared thermography module.
 import unittest
 import sys
 import os
-import math
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from infrared_thermography import (ThermalMode, ThermalPixel,
-                                    EmissivityCorrector,
-                                    ThermalContrastAnalyzer,
-                                    LockInThermography,
+from infrared_thermography import (ThermalPixel, EmissivityCorrector,
+                                    HotspotDetector,
+                                    TemperatureTrendAnalyzer,
                                     InfraredThermography)
 
 
 class TestEmissivityCorrector(unittest.TestCase):
-    """Test emissivity corrector."""
+    """Test corrector."""
     
     def setUp(self):
-        self.ec = EmissivityCorrector()
+        self.ec = EmissivityCorrector(25.0)
     
     def test_correct(self):
-        """Should correct temperature."""
-        t = self.ec.correct_temperature(50.0, 0.9)
-        self.assertGreater(t, 50.0)
-        print(f"  [PASS] Correct: {t:.2f} C")
+        """Should correct temp."""
+        t = self.ec.correct(100.0, 0.9)
+        self.assertGreater(t, 100.0)
+        print(f"  [PASS] Corr: {t:.2f}C")
     
-    def test_estimate(self):
-        """Should estimate emissivity."""
-        eps = self.ec.estimate_emissivity(100.0, 80.0, 25.0)
-        self.assertGreater(eps, 0)
-        print(f"  [PASS] Est eps: {eps:.4f}")
+    def test_perfect_emissivity(self):
+        """Should not change at eps=1."""
+        t = self.ec.correct(50.0, 1.0)
+        self.assertAlmostEqual(t, 50.0, places=0)
+        print(f"  [PASS] Eps1: {t:.2f}C")
+    
+    def test_image(self):
+        """Should correct image."""
+        pixels = [ThermalPixel(0, 0, 100.0, 0.9),
+                  ThermalPixel(1, 0, 50.0, 0.8)]
+        c = self.ec.correct_image(pixels)
+        self.assertEqual(len(c), 2)
+        print("  [PASS] Img")
 
 
-class TestThermalContrastAnalyzer(unittest.TestCase):
-    """Test contrast analyzer."""
+class TestHotspotDetector(unittest.TestCase):
+    """Test detector."""
     
     def setUp(self):
-        self.tc = ThermalContrastAnalyzer()
+        self.hd = HotspotDetector(5.0)
     
-    def test_contrast(self):
-        """Should compute contrast."""
-        c = self.tc.contrast(30.0, 25.0)
-        self.assertEqual(c, 5.0)
-        print(f"  [PASS] Contrast: {c}")
+    def test_detect(self):
+        """Should detect hotspots."""
+        temps = [25.0] * 8 + [50.0, 50.0]
+        h = self.hd.detect(temps, 5, 2)
+        self.assertGreater(len(h), 0)
+        print(f"  [PASS] HS: {len(h)}")
     
-    def test_ratio(self):
-        """Should compute ratio."""
-        r = self.tc.contrast_ratio(30.0, 25.0)
-        self.assertEqual(r, 0.2)
-        print(f"  [PASS] Ratio: {r}")
-    
-    def test_defect_map(self):
-        """Should detect defects."""
-        img = [[25.0, 25.0, 25.0], [25.0, 35.0, 25.0], [25.0, 25.0, 25.0]]
-        dm = self.tc.defect_map(img, 5.0)
-        self.assertTrue(any(any(row) for row in dm))
-        print("  [PASS] DefectMap")
+    def test_no_hotspot(self):
+        """Should not detect if uniform."""
+        temps = [25.0] * 10
+        h = self.hd.detect(temps, 5, 2)
+        self.assertEqual(len(h), 0)
+        print("  [PASS] NoHS")
 
 
-class TestLockInThermography(unittest.TestCase):
-    """Test lock-in thermography."""
+class TestTemperatureTrendAnalyzer(unittest.TestCase):
+    """Test trend."""
     
     def setUp(self):
-        self.li = LockInThermography(0.1)
+        self.tta = TemperatureTrendAnalyzer()
     
-    def test_demodulate(self):
-        """Should demodulate."""
-        signal = [(t * 0.1, math.sin(2.0 * math.pi * 0.1 * t * 0.1))
-                  for t in range(100)]
-        x, y = self.li.demodulate(signal)
-        self.assertGreater(abs(x), 0)
-        print(f"  [PASS] Demod: X={x:.4f} Y={y:.4f}")
+    def test_add(self):
+        """Should add measurement."""
+        self.tta.add_measurement(0.0, [25.0, 26.0, 27.0])
+        self.assertEqual(len(self.tta.history), 1)
+        print("  [PASS] Add")
     
-    def test_amplitude(self):
-        """Should compute amplitude."""
-        a = self.li.amplitude(1.0, 1.0)
-        self.assertAlmostEqual(a, math.sqrt(2), places=5)
-        print(f"  [PASS] Amp: {a:.4f}")
+    def test_slope(self):
+        """Should compute slope."""
+        self.tta.add_measurement(0.0, [25.0])
+        self.tta.add_measurement(1.0, [30.0])
+        s = self.tta.trend_slope()
+        self.assertAlmostEqual(s, 5.0, places=5)
+        print(f"  [PASS] Slope: {s:.2f}")
     
-    def test_phase(self):
-        """Should compute phase."""
-        p = self.li.phase(1.0, 1.0)
-        self.assertAlmostEqual(p, math.pi / 4, places=5)
-        print(f"  [PASS] Phase: {p:.4f}")
-    
-    def test_diffusion(self):
-        """Should compute diffusion length."""
-        d = self.li.thermal_diffusion_length_mm(10.0)
-        self.assertGreater(d, 0)
-        print(f"  [PASS] Diff: {d:.4f} mm")
+    def test_overheat(self):
+        """Should detect overheating."""
+        self.tta.add_measurement(0.0, [25.0])
+        self.tta.add_measurement(1.0, [30.0])
+        self.assertTrue(self.tta.is_overheating(0.5))
+        print("  [PASS] Overheat")
 
 
 class TestInfraredThermography(unittest.TestCase):
     """Test unified controller."""
     
     def setUp(self):
-        self.irt = InfraredThermography()
+        self.ir = InfraredThermography()
     
     def test_capture(self):
         """Should capture."""
-        img = [[25.0] * 5 for _ in range(5)]
-        self.irt.capture(img)
-        self.assertEqual(len(self.irt.thermal_images), 1)
-        print("  [PASS] Capture")
+        temps = [25.0, 30.0, 35.0, 40.0]
+        emiss = [0.9, 0.9, 0.9, 0.9]
+        self.ir.capture(temps, emiss, 2, 2)
+        self.assertEqual(len(self.ir.pixels), 4)
+        print("  [PASS] Cap")
     
-    def test_detect(self):
-        """Should detect."""
-        img = [[25.0] * 5 for _ in range(5)]
-        img[2][2] = 35.0
-        self.irt.capture(img)
-        d = self.irt.detect_defects(5.0)
-        self.assertGreater(len(d), 0)
-        print(f"  [PASS] Detect: {len(d)} defects")
+    def test_inspect(self):
+        """Should inspect."""
+        temps = [25.0] * 8 + [60.0, 60.0]
+        emiss = [0.95] * 10
+        self.ir.capture(temps, emiss, 5, 2)
+        r = self.ir.inspect()
+        self.assertIn("hotspots", r)
+        print(f"  [PASS] Insp: {r}")
     
-    def test_summary(self):
-        """Should summarize."""
-        self.irt.capture([[25.0] * 3 for _ in range(3)])
-        s = self.irt.thermography_summary()
-        self.assertIn("images", s)
-        print(f"  [PASS] Sum: {s}")
+    def test_trend(self):
+        """Should track trend."""
+        temps = [25.0, 30.0]
+        emiss = [0.9, 0.9]
+        self.ir.capture(temps, emiss, 2, 1)
+        self.ir.add_timepoint(0.0)
+        self.ir.add_timepoint(1.0)
+        s = self.ir.ir_summary()
+        self.assertIn("trend_slope", s)
+        print(f"  [PASS] Trend: {s}")
 
 
 if __name__ == '__main__':
