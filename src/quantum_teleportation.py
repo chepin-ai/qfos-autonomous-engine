@@ -1,207 +1,196 @@
 """
 Quantum Teleportation Module
-Bell state preparation, quantum teleportation protocol,
-fidelity estimation, and entanglement swapping.
+Bell state preparation, measurement, classical communication,
+and state reconstruction for autonomous quantum computing.
 """
 
 import math
+import random
 from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass
 
 
 @dataclass
-class Qubit:
-    """Qubit state."""
+class QubitState:
+    """Quantum state."""
     alpha: complex
     beta: complex
 
 
-class BellStateGenerator:
+class BellStatePreparator:
     """
-    Generate Bell states.
+    Prepare Bell states for entanglement.
     """
     
     def __init__(self):
-        self.states = {
-            "phi_plus": [1/math.sqrt(2), 0, 0, 1/math.sqrt(2)],
-            "phi_minus": [1/math.sqrt(2), 0, 0, -1/math.sqrt(2)],
-            "psi_plus": [0, 1/math.sqrt(2), 1/math.sqrt(2), 0],
-            "psi_minus": [0, 1/math.sqrt(2), -1/math.sqrt(2), 0]
+        self.bell_states = {
+            "Phi+": [QubitState(1.0/math.sqrt(2), 0.0),
+                     QubitState(0.0, 1.0/math.sqrt(2))],
+            "Phi-": [QubitState(1.0/math.sqrt(2), 0.0),
+                     QubitState(0.0, -1.0/math.sqrt(2))],
+            "Psi+": [QubitState(0.0, 1.0/math.sqrt(2)),
+                     QubitState(1.0/math.sqrt(2), 0.0)],
+            "Psi-": [QubitState(0.0, 1.0/math.sqrt(2)),
+                     QubitState(-1.0/math.sqrt(2), 0.0)]
         }
     
-    def get(self, name: str) -> List[complex]:
+    def prepare(self, state: str) -> List[QubitState]:
         """
-        Get Bell state.
+        Prepare Bell state.
         
         Args:
-            name: State name
+            state: State name
         
         Returns:
-            State amplitudes
+            Two-qubit state
         """
-        amplitudes = self.states.get(name, self.states["phi_plus"])
-        return [complex(a, 0) for a in amplitudes]
+        return self.bell_states.get(state, self.bell_states["Phi+"])
     
-    def measure_bell(self, state: List[complex]) -> str:
+    def fidelity(self, state: List[QubitState],
+                target: str) -> float:
         """
-        Measure in Bell basis.
+        Compute fidelity with target Bell state.
         
         Args:
-            state: Two-qubit state
+            state: Actual state
+            target: Target state name
         
         Returns:
-            Bell state name
+            Fidelity
         """
-        probs = {}
-        for name, amp in self.states.items():
-            # Overlap
-            overlap = sum(state[i].conjugate() * amp[i] for i in range(4))
-            probs[name] = abs(overlap)**2
+        target_state = self.prepare(target)
+        if len(state) != len(target_state):
+            return 0.0
         
-        return max(probs, key=probs.get)
+        for i in range(len(state)):
+            if (abs(state[i].alpha - target_state[i].alpha) > 1e-10 or
+                abs(state[i].beta - target_state[i].beta) > 1e-10):
+                return 0.0
+        return 1.0
 
 
-class QuantumTeleportationProtocol:
+class BellMeasurement:
     """
-    Quantum teleportation.
-    """
-    
-    def __init__(self):
-        self.bell = BellStateGenerator()
-        self.teleported: Qubit = Qubit(1.0, 0.0)
-    
-    def teleport(self, unknown: Qubit,
-                bell_pair: List[complex]) -> Tuple[Qubit, str]:
-        """
-        Teleport unknown qubit.
-        
-        Args:
-            unknown: Unknown state
-            bell_pair: Bell pair (qubits 1 and 2)
-        
-        Returns:
-            (teleported qubit, measurement outcome)
-        """
-        # Three-qubit state: unknown (q0) + bell_pair (q1, q2)
-        # |psi> = alpha|0> + beta|1>
-        # Total: |psi> ⊗ |bell>
-        
-        alpha = unknown.alpha
-        beta = unknown.beta
-        
-        # Simulate Bell measurement on q0 and q1
-        # Four possible outcomes: 00, 01, 10, 11
-        import random
-        outcome = random.choice(["00", "01", "10", "11"])
-        
-        # Apply correction based on outcome
-        if outcome == "00":
-            self.teleported = Qubit(alpha, beta)
-        elif outcome == "01":
-            self.teleported = Qubit(beta, alpha)  # X correction
-        elif outcome == "10":
-            self.teleported = Qubit(alpha, -beta)  # Z correction
-        else:  # "11"
-            self.teleported = Qubit(-beta, alpha)  # XZ correction
-        
-        return self.teleported, outcome
-    
-    def teleport_deterministic(self, unknown: Qubit,
-                              bell_pair: List[complex],
-                              outcome: str) -> Qubit:
-        """
-        Deterministic teleportation with known outcome.
-        
-        Args:
-            unknown: Unknown state
-            bell_pair: Bell pair
-            outcome: Measurement outcome
-        
-        Returns:
-            Teleported qubit
-        """
-        alpha = unknown.alpha
-        beta = unknown.beta
-        
-        if outcome == "00":
-            return Qubit(alpha, beta)
-        elif outcome == "01":
-            return Qubit(beta, alpha)
-        elif outcome == "10":
-            return Qubit(alpha, -beta)
-        else:
-            return Qubit(-beta, alpha)
-
-
-class FidelityEstimator:
-    """
-    Estimate teleportation fidelity.
+    Perform Bell state measurement.
     """
     
     def __init__(self):
         pass
     
-    def state_fidelity(self, state1: Qubit, state2: Qubit) -> float:
+    def measure(self, qubit_a: QubitState,
+               qubit_b: QubitState) -> Tuple[int, int]:
         """
-        Compute state fidelity.
+        Perform Bell measurement.
         
         Args:
-            state1: State 1
-            state2: State 2
+            qubit_a: Qubit A
+            qubit_b: Qubit B
+        
+        Returns:
+            (classical_bit_1, classical_bit_2)
+        """
+        # Simplified: random outcome
+        return (random.randint(0, 1), random.randint(0, 1))
+    
+    def outcome_to_corrections(self, outcome: Tuple[int, int]) -> Tuple[bool, bool]:
+        """
+        Convert outcome to correction operations.
+        
+        Args:
+            outcome: Measurement outcome
+        
+        Returns:
+            (apply_z, apply_x)
+        """
+        b1, b2 = outcome
+        apply_z = b1 == 1
+        apply_x = b2 == 1
+        return (apply_z, apply_x)
+
+
+class ClassicalChannel:
+    """
+    Classical communication channel.
+    """
+    
+    def __init__(self, latency_s: float = 0.0,
+                 error_rate: float = 0.0):
+        """
+        Args:
+            latency_s: Latency
+            error_rate: Bit error rate
+        """
+        self.latency = latency_s
+        self.error_rate = error_rate
+    
+    def transmit(self, bits: Tuple[int, int]) -> Tuple[int, int]:
+        """
+        Transmit classical bits.
+        
+        Args:
+            bits: Bits to transmit
+        
+        Returns:
+            Received bits
+        """
+        received = list(bits)
+        for i in range(2):
+            if random.random() < self.error_rate:
+                received[i] = 1 - received[i]
+        return tuple(received)
+
+
+class StateReconstructor:
+    """
+    Reconstruct teleported state.
+    """
+    
+    def __init__(self):
+        pass
+    
+    def apply_corrections(self, state: QubitState,
+                         apply_z: bool,
+                         apply_x: bool) -> QubitState:
+        """
+        Apply Pauli corrections.
+        
+        Args:
+            state: Received state
+            apply_z: Apply Z
+            apply_x: Apply X
+        
+        Returns:
+            Corrected state
+        """
+        alpha = state.alpha
+        beta = state.beta
+        
+        if apply_z:
+            alpha = -alpha if apply_z else alpha
+            # Actually Z: |0> -> |0>, |1> -> -|1>
+            beta = -beta
+        
+        if apply_x:
+            # X: |0> <-> |1>
+            alpha, beta = beta, alpha
+        
+        return QubitState(alpha, beta)
+    
+    def fidelity(self, original: QubitState,
+                reconstructed: QubitState) -> float:
+        """
+        Compute fidelity.
+        
+        Args:
+            original: Original state
+            reconstructed: Reconstructed state
         
         Returns:
             Fidelity
         """
-        overlap = (state1.alpha.conjugate() * state2.alpha +
-                  state1.beta.conjugate() * state2.beta)
-        return abs(overlap)**2
-    
-    def average_fidelity(self, fidelities: List[float]) -> float:
-        """
-        Compute average fidelity.
-        
-        Args:
-            fidelities: Fidelities
-        
-        Returns:
-            Average
-        """
-        return sum(fidelities) / len(fidelities) if fidelities else 0.0
-
-
-class EntanglementSwapper:
-    """
-    Entanglement swapping.
-    """
-    
-    def __init__(self):
-        self.bell = BellStateGenerator()
-    
-    def swap(self, pair1: List[complex],
-            pair2: List[complex],
-            bell_measurement: str) -> List[complex]:
-        """
-        Perform entanglement swapping.
-        
-        Args:
-            pair1: First Bell pair
-            pair2: Second Bell pair
-            bell_measurement: Bell measurement outcome
-        
-        Returns:
-            New Bell pair
-        """
-        # Simplified: return phi_plus with correction
-        state = self.bell.get("phi_plus")
-        
-        if bell_measurement == "phi_minus":
-            state = [state[0], state[1], state[2], -state[3]]
-        elif bell_measurement == "psi_plus":
-            state = [state[1], state[0], state[3], state[2]]
-        elif bell_measurement == "psi_minus":
-            state = [state[1], -state[0], state[3], -state[2]]
-        
-        return state
+        overlap = abs(original.alpha.conjugate() * reconstructed.alpha +
+                     original.beta.conjugate() * reconstructed.beta) ** 2
+        return overlap
 
 
 class QuantumTeleportation:
@@ -210,60 +199,43 @@ class QuantumTeleportation:
     """
     
     def __init__(self):
-        self.bell_gen = BellStateGenerator()
-        self.protocol = QuantumTeleportationProtocol()
-        self.fidelity = FidelityEstimator()
-        self.swapper = EntanglementSwapper()
-        self.history: List[Dict] = []
+        self.preparator = BellStatePreparator()
+        self.measurement = BellMeasurement()
+        self.channel = ClassicalChannel()
+        self.reconstructor = StateReconstructor()
     
-    def teleport(self, unknown: Qubit,
-                bell_name: str = "phi_plus") -> Dict:
+    def teleport(self, state: QubitState) -> Tuple[QubitState, float]:
         """
-        Teleport qubit.
+        Teleport quantum state.
         
         Args:
-            unknown: Unknown state
-            bell_name: Bell pair type
+            state: State to teleport
         
         Returns:
-            Results
+            (reconstructed_state, fidelity)
         """
-        bell = self.bell_gen.get(bell_name)
-        teleported, outcome = self.protocol.teleport(unknown, bell)
+        # Prepare entangled pair
+        bell = self.preparator.prepare("Phi+")
         
-        fid = self.fidelity.state_fidelity(unknown, teleported)
+        # Bell measurement on source and one half of entangled pair
+        outcome = self.measurement.measure(state, bell[0])
         
-        result = {
-            "original": (unknown.alpha, unknown.beta),
-            "teleported": (teleported.alpha, teleported.beta),
-            "outcome": outcome,
-            "fidelity": fid
-        }
-        self.history.append(result)
-        return result
+        # Transmit classical bits
+        received = self.channel.transmit(outcome)
+        
+        # Apply corrections to Bob's qubit
+        apply_z, apply_x = self.measurement.outcome_to_corrections(received)
+        reconstructed = self.reconstructor.apply_corrections(bell[1], apply_z, apply_x)
+        
+        # Compute fidelity
+        fidelity = self.reconstructor.fidelity(state, reconstructed)
+        
+        return (reconstructed, fidelity)
     
-    def entanglement_swap(self, pair1_name: str,
-                         pair2_name: str,
-                         measurement: str) -> List[complex]:
-        """
-        Swap entanglement.
-        
-        Args:
-            pair1_name: First pair
-            pair2_name: Second pair
-            measurement: Measurement
-        
-        Returns:
-            New pair
-        """
-        p1 = self.bell_gen.get(pair1_name)
-        p2 = self.bell_gen.get(pair2_name)
-        return self.swapper.swap(p1, p2, measurement)
-    
-    def qt_summary(self) -> Dict:
+    def qteleport_summary(self) -> Dict:
         """Get summary."""
-        avg_fid = self.fidelity.average_fidelity([h["fidelity"] for h in self.history])
         return {
-            "teleportations": len(self.history),
-            "average_fidelity": avg_fid
+            "bell_states": ["Phi+", "Phi-", "Psi+", "Psi-"],
+            "operations": ["Bell measurement", "Classical channel", "Pauli corrections"],
+            "latency": self.channel.latency
         }
