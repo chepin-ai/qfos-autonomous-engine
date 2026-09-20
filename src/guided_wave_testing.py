@@ -1,226 +1,204 @@
 """
 Guided Wave Testing Module
-Lamb waves, shear horizontal waves, dispersion curves,
-and defect localization for autonomous long-range NDT.
+Dispersion curve calculation, mode selection, group velocity,
+and defect reflection analysis for autonomous long-range NDT.
 """
 
 import math
 from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass
-from enum import Enum
-
-
-class WaveMode(Enum):
-    """Guided wave modes."""
-    LAMB_SYMMETRIC = "A0/S0"
-    LAMB_ANTISYMMETRIC = "A0"
-    SHEAR_HORIZONTAL = "SH"
-    TORSIONAL = "T"
 
 
 @dataclass
-class GuidedWaveSignal:
-    """Guided wave signal."""
-    time_us: float
-    amplitude: float
-    frequency_MHz: float
-    mode: WaveMode
-    group_velocity_mm_us: float = 0.0
+class WaveMode:
+    """Guided wave mode."""
+    name: str
+    frequency_Hz: float
+    phase_velocity_m_s: float
+    group_velocity_m_s: float
+    attenuation_dB_m: float
 
 
-class DispersionCurve:
+class DispersionCalculator:
     """
-    Dispersion curve for guided waves.
+    Calculate dispersion curves.
     """
     
-    def __init__(self, thickness_mm: float = 5.0,
-                 material_velocity_mm_us: float = 5.9):
+    def __init__(self, thickness_mm: float = 10.0,
+                 longitudinal_vel_m_s: float = 5900.0,
+                 shear_vel_m_s: float = 3230.0):
         """
         Args:
             thickness_mm: Plate thickness
-            material_velocity_mm_us: Material velocity
+            longitudinal_vel_m_s: Longitudinal velocity
+            shear_vel_m_s: Shear velocity
         """
-        self.thickness = thickness_mm
-        self.c_l = material_velocity_mm_us
-        self.c_t = material_velocity_mm_us * 0.6  # Transverse velocity
+        self.thickness = thickness_mm * 1e-3
+        self.c_l = longitudinal_vel_m_s
+        self.c_s = shear_vel_m_s
     
-    def lamb_wave_velocity(self, frequency_MHz: float,
-                          mode: str = "A0") -> float:
+    def lamb_phase_velocity(self, fd_product_MHz_mm: float,
+                           mode: int = 0) -> float:
         """
-        Compute Lamb wave group velocity.
+        Estimate Lamb wave phase velocity.
         
         Args:
-            frequency_MHz: Frequency
-            mode: "A0" or "S0"
+            fd_product_MHz_mm: Frequency-thickness product
+            mode: Mode number
         
         Returns:
-            Group velocity mm/us
+            Phase velocity in m/s
         """
-        fd = frequency_MHz * self.thickness  # Frequency-thickness product
+        fd = fd_product_MHz_mm * 1e6 * 1e-3
         
-        # Simplified approximation
-        if mode == "A0":
-            # A0 mode: lower velocity at low fd
-            return self.c_t * math.tanh(fd / 10.0)
-        elif mode == "S0":
-            # S0 mode: approaches plate velocity
-            return self.c_l * (1.0 - 0.5 * math.exp(-fd / 5.0))
+        # Simplified approximation for low fd
+        if mode == 0:
+            # A0 mode approximation
+            return self.c_s * (1.0 - 0.1 * math.exp(-fd / 1e6))
         else:
-            return self.c_t
+            # Higher modes approach shear velocity
+            return self.c_s * (1.0 + 0.05 * mode)
     
-    def phase_velocity(self, frequency_MHz: float,
-                      mode: str = "A0") -> float:
+    def group_velocity(self, phase_vel: float,
+                      frequency_Hz: float) -> float:
         """
-        Compute phase velocity.
+        Estimate group velocity from phase velocity.
         
         Args:
-            frequency_MHz: Frequency
-            mode: Mode
+            phase_vel: Phase velocity
+            frequency_Hz: Frequency
         
         Returns:
-            Phase velocity
+            Group velocity
         """
-        vg = self.lamb_wave_velocity(frequency_MHz, mode)
-        # Simplified: vp ~ vg for low dispersion
-        return vg * 1.1
+        # Simplified: group velocity ≈ phase velocity for low dispersion
+        return phase_vel * 0.95
     
-    def wavelength_mm(self, frequency_MHz: float,
-                     velocity_mm_us: float) -> float:
+    def modes_at_frequency(self, frequency_Hz: float,
+                          num_modes: int = 3) -> List[WaveMode]:
         """
-        Compute wavelength.
+        Get modes at frequency.
         
         Args:
-            frequency_MHz: Frequency
-            velocity_mm_us: Velocity
+            frequency_Hz: Frequency
+            num_modes: Number of modes
         
         Returns:
-            Wavelength
+            Modes
         """
-        return velocity_mm_us / frequency_MHz
+        fd = frequency_Hz * self.thickness * 1e-6
+        modes = []
+        
+        for m in range(num_modes):
+            cp = self.lamb_phase_velocity(fd, m)
+            cg = self.group_velocity(cp, frequency_Hz)
+            
+            name = f"A{m}" if m % 2 == 0 else f"S{m}"
+            modes.append(WaveMode(name, frequency_Hz, cp, cg, 0.1 * m))
+        
+        return modes
 
 
-class WaveTransducer:
+class ModeSelector:
     """
-    Guided wave transducer.
+    Select optimal wave modes.
     """
     
-    def __init__(self, transducer_id: int,
-                 position_mm: float,
-                 angle_deg: float = 0.0):
-        """
-        Args:
-            transducer_id: ID
-            position_mm: Position
-            angle_deg: Wedge angle
-        """
-        self.transducer_id = transducer_id
-        self.position = position_mm
-        self.angle = angle_deg
+    def __init__(self):
+        pass
     
-    def excite(self, frequency_MHz: float,
-              amplitude: float = 1.0,
-              cycles: int = 5) -> List[GuidedWaveSignal]:
+    def select_by_penetration(self, modes: List[WaveMode],
+                             target_distance_m: float = 10.0) -> Optional[WaveMode]:
         """
-        Generate toneburst excitation.
+        Select mode for maximum penetration.
         
         Args:
-            frequency_MHz: Frequency
-            amplitude: Amplitude
-            cycles: Cycles
+            modes: Available modes
+            target_distance_m: Target distance
         
         Returns:
-            Signal train
+            Best mode
         """
-        period_us = 1.0 / frequency_MHz
-        signals = []
+        if not modes:
+            return None
         
-        for i in range(cycles):
-            t = i * period_us
-            amp = amplitude * math.sin(2.0 * math.pi * frequency_MHz * t)
-            signals.append(GuidedWaveSignal(
-                time_us=t,
-                amplitude=amp,
-                frequency_MHz=frequency_MHz,
-                mode=WaveMode.LAMB_SYMMETRIC
-            ))
-        
-        return signals
-
-
-class DefectLocalizer:
-    """
-    Defect localization from guided wave signals.
-    """
+        # Minimize attenuation
+        return min(modes, key=lambda m: m.attenuation_dB_m)
     
-    def __init__(self, transducer_positions_mm: List[float]):
+    def select_by_resolution(self, modes: List[WaveMode],
+                            defect_size_mm: float = 5.0) -> Optional[WaveMode]:
         """
+        Select mode for best resolution.
+        
         Args:
-            transducer_positions_mm: Transducer positions
+            modes: Available modes
+            defect_size_mm: Defect size
+        
+        Returns:
+            Best mode
         """
-        self.positions = transducer_positions_mm
+        if not modes:
+            return None
+        
+        # Higher frequency (shorter wavelength) = better resolution
+        return max(modes, key=lambda m: m.frequency_Hz / m.phase_velocity_m_s)
+
+
+class DefectReflector:
+    """
+    Analyze defect reflections in guided waves.
+    """
     
-    def time_of_flight(self, distance_mm: float,
-                      velocity_mm_us: float) -> float:
+    def __init__(self):
+        pass
+    
+    def reflection_coefficient(self, defect_depth_mm: float,
+                              wall_thickness_mm: float) -> float:
+        """
+        Compute reflection coefficient.
+        
+        Args:
+            defect_depth_mm: Defect depth
+            wall_thickness_mm: Wall thickness
+        
+        Returns:
+            Reflection coefficient
+        """
+        if wall_thickness_mm <= 0:
+            return 0.0
+        
+        ratio = defect_depth_mm / wall_thickness_mm
+        return min(1.0, ratio * 0.5)
+    
+    def time_of_flight(self, distance_m: float,
+                      group_velocity_m_s: float) -> float:
         """
         Compute time of flight.
         
         Args:
-            distance_mm: Distance
-            velocity_mm_us: Velocity
+            distance_m: Distance
+            group_velocity_m_s: Group velocity
         
         Returns:
-            Time of flight
+            Time of flight in seconds
         """
-        if velocity_mm_us <= 0:
-            return 0.0
-        return distance_mm / velocity_mm_us
+        if group_velocity_m_s <= 0:
+            return float('inf')
+        return distance_m / group_velocity_m_s
     
-    def localize_1d(self, tof_us: float,
-                   velocity_mm_us: float,
-                   exciter_pos_mm: float) -> List[float]:
+    def locate_defect(self, time_of_flight_s: float,
+                     group_velocity_m_s: float) -> float:
         """
-        1D defect localization.
+        Locate defect from TOF.
         
         Args:
-            tof_us: Time of flight
-            velocity_mm_us: Velocity
-            exciter_pos_mm: Exciter position
+            time_of_flight_s: Time of flight
+            group_velocity_m_s: Group velocity
         
         Returns:
-            Possible defect positions
+            Distance in meters
         """
-        distance = tof_us * velocity_mm_us / 2.0  # Round trip
-        return [exciter_pos_mm + distance, exciter_pos_mm - distance]
-    
-    def triangulate(self, tofs_us: List[float],
-                   velocities_mm_us: List[float],
-                   transducer_indices: List[int]) -> Tuple[float, float]:
-        """
-        Triangulate defect position.
-        
-        Args:
-            tofs_us: Times of flight
-            velocities_mm_us: Velocities
-            transducer_indices: Transducer indices
-        
-        Returns:
-            (x, y) position
-        """
-        if not tofs_us or not transducer_indices:
-            return (0.0, 0.0)
-        
-        # Simplified: average position weighted by distance
-        x_sum = 0.0
-        y_sum = 0.0
-        
-        for tof, vel, idx in zip(tofs_us, velocities_mm_us, transducer_indices):
-            if idx < len(self.positions):
-                dist = tof * vel / 2.0
-                x_sum += self.positions[idx]
-                y_sum += dist
-        
-        n = len(tofs_us)
-        return (x_sum / n, y_sum / n)
+        return time_of_flight_s * group_velocity_m_s / 2.0
 
 
 class GuidedWaveTesting:
@@ -228,83 +206,57 @@ class GuidedWaveTesting:
     Unified guided wave testing controller.
     """
     
-    def __init__(self, thickness_mm: float = 5.0):
-        """
-        Args:
-            thickness_mm: Plate thickness
-        """
-        self.dispersion = DispersionCurve(thickness_mm)
-        self.transducers: List[WaveTransducer] = []
-        self.localizer: Optional[DefectLocalizer] = None
-        self.signals: List[GuidedWaveSignal] = []
-        self.defects: List[Dict] = []
+    def __init__(self):
+        self.dispersion = DispersionCalculator()
+        self.selector = ModeSelector()
+        self.reflector = DefectReflector()
+        self.selected_mode: Optional[WaveMode] = None
+        self.signals: List[Tuple[float, float]] = []
     
-    def add_transducer(self, position_mm: float, angle_deg: float = 0.0):
+    def select_mode(self, frequency_Hz: float,
+                   criterion: str = "penetration"):
         """
-        Add transducer.
+        Select mode.
         
         Args:
-            position_mm: Position
-            angle_deg: Angle
+            frequency_Hz: Frequency
+            criterion: Selection criterion
         """
-        tid = len(self.transducers)
-        self.transducers.append(WaveTransducer(tid, position_mm, angle_deg))
-        self.localizer = DefectLocalizer([t.position for t in self.transducers])
+        modes = self.dispersion.modes_at_frequency(frequency_Hz)
+        
+        if criterion == "penetration":
+            self.selected_mode = self.selector.select_by_penetration(modes)
+        elif criterion == "resolution":
+            self.selected_mode = self.selector.select_by_resolution(modes)
+        else:
+            self.selected_mode = modes[0] if modes else None
     
-    def excite(self, transducer_id: int,
-              frequency_MHz: float,
-              amplitude: float = 1.0) -> List[GuidedWaveSignal]:
+    def inspect(self, distances_m: List[float],
+               defect_depths_mm: List[float],
+               wall_thickness_mm: float = 10.0):
         """
-        Excite guided wave.
+        Inspect pipe/plate.
         
         Args:
-            transducer_id: Transducer
-            frequency_MHz: Frequency
-            amplitude: Amplitude
-        
-        Returns:
-            Signals
+            distances_m: Distances
+            defect_depths_mm: Defect depths
+            wall_thickness_mm: Wall thickness
         """
-        if transducer_id >= len(self.transducers):
-            return []
+        self.signals = []
         
-        signals = self.transducers[transducer_id].excite(frequency_MHz, amplitude)
-        self.signals.extend(signals)
-        return signals
+        if self.selected_mode is None:
+            return
+        
+        for dist, depth in zip(distances_m, defect_depths_mm):
+            refl = self.reflector.reflection_coefficient(depth, wall_thickness_mm)
+            tof = self.reflector.time_of_flight(dist, self.selected_mode.group_velocity_m_s)
+            self.signals.append((refl, tof))
     
-    def analyze(self, tof_us: float,
-               frequency_MHz: float,
-               mode: str = "A0") -> Dict:
-        """
-        Analyze signal.
-        
-        Args:
-            tof_us: Time of flight
-            frequency_MHz: Frequency
-            mode: Mode
-        
-        Returns:
-            Analysis report
-        """
-        velocity = self.dispersion.lamb_wave_velocity(frequency_MHz, mode)
-        wavelength = self.dispersion.wavelength_mm(frequency_MHz, velocity)
-        
-        # Estimate distance
-        distance_mm = tof_us * velocity / 2.0
-        
-        report = {
-            "velocity_mm_us": velocity,
-            "wavelength_mm": wavelength,
-            "distance_mm": distance_mm,
-            "mode": mode
-        }
-        return report
-    
-    def gwut_summary(self) -> Dict:
-        """Get GWUT summary."""
+    def gwt_summary(self) -> Dict:
+        """Get summary."""
         return {
-            "transducers": len(self.transducers),
-            "thickness_mm": self.dispersion.thickness,
-            "signals": len(self.signals),
-            "defects": len(self.defects)
+            "mode": self.selected_mode.name if self.selected_mode else "none",
+            "frequency_Hz": self.selected_mode.frequency_Hz if self.selected_mode else 0,
+            "group_velocity_m_s": self.selected_mode.group_velocity_m_s if self.selected_mode else 0,
+            "signals": len(self.signals)
         }
