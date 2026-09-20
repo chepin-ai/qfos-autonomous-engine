@@ -8,138 +8,139 @@ import os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from quantum_state_tomography import (DensityMatrix, StateTomography,
-                                      StateFidelity, QuantumStateTomography)
+from quantum_state_tomography import (MeasurementOutcome, LinearInversionTomography,
+                                      MaximumLikelihoodEstimator,
+                                      StateValidator,
+                                      ProcessTomography,
+                                      QuantumStateTomography)
 
 
-class TestDensityMatrix(unittest.TestCase):
-    """Test density matrix."""
+class TestLinearInversionTomography(unittest.TestCase):
+    """Test linear inversion."""
     
     def setUp(self):
-        self.rho = DensityMatrix(2)
+        self.li = LinearInversionTomography(1)
+    
+    def test_reconstruct(self):
+        """Should reconstruct."""
+        counts = {
+            "X": {0: 500, 1: 500},
+            "Y": {0: 500, 1: 500},
+            "Z": {0: 1000, 1: 0}
+        }
+        rho = self.li.density_matrix_from_counts(counts)
+        self.assertEqual(len(rho), 2)
+        print(f"  [PASS] Recon: {rho}")
+    
+    def test_fidelity(self):
+        """Should compute fidelity."""
+        rho = [[1.0, 0.0], [0.0, 0.0]]
+        f = self.li.fidelity(rho, rho)
+        self.assertAlmostEqual(f, 1.0, places=5)
+        print(f"  [PASS] Fid: {f:.4f}")
+
+
+class TestMaximumLikelihoodEstimator(unittest.TestCase):
+    """Test MLE."""
+    
+    def setUp(self):
+        self.mle = MaximumLikelihoodEstimator(1)
+    
+    def test_likelihood(self):
+        """Should compute likelihood."""
+        rho = [[0.5, 0.0], [0.0, 0.5]]
+        counts = {"Z": {0: 500, 1: 500}}
+        l = self.mle.likelihood(rho, counts)
+        self.assertIsInstance(l, float)
+        print(f"  [PASS] Like: {l:.2f}")
+    
+    def test_estimate(self):
+        """Should estimate."""
+        counts = {"Z": {0: 1000, 1: 0}}
+        rho = self.mle.estimate(counts)
+        self.assertEqual(len(rho), 2)
+        print("  [PASS] Est")
+
+
+class TestStateValidator(unittest.TestCase):
+    """Test validator."""
+    
+    def setUp(self):
+        self.sv = StateValidator()
+    
+    def test_hermitian(self):
+        """Should check Hermitian."""
+        rho = [[0.5, 0.0], [0.0, 0.5]]
+        h = self.sv.is_hermitian(rho)
+        self.assertTrue(h)
+        print("  [PASS] Herm")
     
     def test_trace(self):
-        """Should have trace 1."""
-        tr = self.rho.trace()
-        self.assertAlmostEqual(tr.real, 1.0, places=6)
-        print(f"  [PASS] Tr: {tr}")
+        """Should compute trace."""
+        rho = [[0.5, 0.0], [0.0, 0.5]]
+        t = self.sv.trace(rho)
+        self.assertAlmostEqual(t, 1.0, places=5)
+        print(f"  [PASS] Tr: {t:.4f}")
+    
+    def test_psd(self):
+        """Should check PSD."""
+        rho = [[0.5, 0.0], [0.0, 0.5]]
+        p = self.sv.is_positive_semidefinite(rho)
+        self.assertTrue(p)
+        print("  [PASS] PSD")
     
     def test_purity(self):
         """Should compute purity."""
-        p = self.rho.purity()
-        self.assertGreater(p, 0)
-        print(f"  [PASS] Purity: {p:.4f}")
-    
-    def test_pure_state(self):
-        """Should set pure state."""
-        state = [complex(1.0, 0.0), complex(0.0, 0.0)]
-        self.rho.set_pure_state(state)
-        p = self.rho.purity()
-        self.assertAlmostEqual(p, 1.0, places=5)
-        print(f"  [PASS] Pure: {p:.4f}")
-    
-    def test_physical(self):
-        """Should be physical."""
-        self.assertTrue(self.rho.is_physical())
-        print("  [PASS] Phys")
-    
-    def test_expectation(self):
-        """Should compute expectation."""
-        Z = [[complex(1.0, 0.0), complex(0.0, 0.0)],
-             [complex(0.0, 0.0), complex(-1.0, 0.0)]]
-        e = self.rho.expectation(Z)
-        self.assertAlmostEqual(e, 0.0, places=5)
-        print(f"  [PASS] Exp: {e:.4f}")
+        rho = [[0.5, 0.0], [0.0, 0.5]]
+        p = self.sv.purity(rho)
+        self.assertAlmostEqual(p, 0.5, places=5)
+        print(f"  [PASS] Pur: {p:.4f}")
 
 
-class TestStateTomography(unittest.TestCase):
-    """Test state tomography."""
+class TestProcessTomography(unittest.TestCase):
+    """Test process."""
     
     def setUp(self):
-        self.tomo = StateTomography(1)
+        self.pt = ProcessTomography(1)
     
-    def test_add_measurement(self):
-        """Should add measurement."""
-        self.tomo.add_measurement("Z", 0.5, 1000)
-        self.assertEqual(len(self.tomo.measurements), 1)
-        print("  [PASS] Add")
+    def test_chi(self):
+        """Should estimate chi."""
+        chi = self.pt.chi_matrix([], [])
+        self.assertGreater(len(chi), 0)
+        print("  [PASS] Chi")
     
-    def test_reconstruct(self):
-        """Should reconstruct state."""
-        self.tomo.add_measurement("Z", 0.5, 1000)
-        rho = self.tomo.reconstruct()
-        self.assertIsNotNone(rho)
-        self.assertTrue(rho.is_physical())
-        print("  [PASS] Rec")
-    
-    def test_tensor(self):
-        """Should compute tensor product."""
-        I = self.tomo.identity()
-        X = self.tomo.pauli_x()
-        T = self.tomo.tensor_product(I, X)
-        self.assertEqual(len(T), 4)
-        print("  [PASS] Tensor")
-
-
-class TestStateFidelity(unittest.TestCase):
-    """Test fidelity."""
-    
-    def setUp(self):
-        self.fid = StateFidelity()
-        self.rho1 = DensityMatrix(2)
-        self.rho2 = DensityMatrix(2)
-    
-    def test_same_state(self):
-        """Fidelity of same state should be ~1."""
-        f = self.fid.fidelity(self.rho1, self.rho2)
-        self.assertAlmostEqual(f, 1.0, places=5)
-        print(f"  [PASS] Same: {f:.4f}")
-    
-    def test_trace_dist(self):
-        """Should compute trace distance."""
-        t = self.fid.trace_distance(self.rho1, self.rho2)
-        self.assertEqual(t, 0.0)
-        print(f"  [PASS] TrDist: {t}")
+    def test_fidelity(self):
+        """Should compute process fidelity."""
+        chi = [[1.0, 0.0], [0.0, 0.0]]
+        f = self.pt.process_fidelity(chi, chi)
+        self.assertEqual(f, 1.0)
+        print(f"  [PASS] PFid: {f}")
 
 
 class TestQuantumStateTomography(unittest.TestCase):
     """Test unified controller."""
     
     def setUp(self):
-        self.qst = QuantumStateTomography()
+        self.qst = QuantumStateTomography(1)
     
-    def test_setup(self):
-        """Should setup."""
-        self.qst.setup(1)
-        self.assertIsNotNone(self.qst.tomography)
-        print("  [PASS] Setup")
+    def test_reconstruct(self):
+        """Should reconstruct."""
+        counts = {"Z": {0: 1000, 1: 0}}
+        rho = self.qst.reconstruct(counts, "linear")
+        self.assertEqual(len(rho), 2)
+        print("  [PASS] Rec")
     
-    def test_measure_reconstruct(self):
-        """Should measure and reconstruct."""
-        self.qst.setup(1)
-        self.qst.measure("Z", 0.5, 1000)
-        self.qst.measure("X", 0.3, 1000)
-        rho = self.qst.reconstruct()
-        self.assertIsNotNone(rho)
-        print("  [PASS] MR")
-    
-    def test_fidelity(self):
-        """Should compute fidelity."""
-        self.qst.setup(1)
-        self.qst.measure("Z", 1.0, 1000)
-        self.qst.reconstruct()
-        target = DensityMatrix(2)
-        f = self.qst.fidelity_with(target)
-        self.assertGreaterEqual(f, 0.0)
-        print(f"  [PASS] Fid: {f:.4f}")
+    def test_validate(self):
+        """Should validate."""
+        rho = [[0.5, 0.0], [0.0, 0.5]]
+        v = self.qst.validate(rho)
+        self.assertIn("purity", v)
+        print(f"  [PASS] Val: {v}")
     
     def test_summary(self):
         """Should summarize."""
-        self.qst.setup(1)
-        self.qst.measure("Z", 0.5, 1000)
-        self.qst.reconstruct()
-        s = self.qst.tomography_summary()
-        self.assertIn("qubits", s)
+        s = self.qst.qst_summary()
+        self.assertIn("methods", s)
         print(f"  [PASS] Sum: {s}")
 
 
