@@ -1,205 +1,250 @@
 """
 Neutron Radiography Module
-Thermal/fast neutron imaging, attenuation analysis, contrast computation,
-and defect detection for autonomous NDT of dense materials.
+Neutron attenuation calculation, image contrast enhancement,
+scattering correction, and defect detection for NDT.
 """
 
 import math
 from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass
-from enum import Enum
-
-
-class NeutronType(Enum):
-    """Neutron energy classification."""
-    THERMAL = "thermal"
-    FAST = "fast"
-    COLD = "cold"
 
 
 @dataclass
-class NeutronImage:
-    """Neutron radiography image."""
-    pixel_size_mm: float
-    exposure_s: float
-    neutron_flux_n_cm2_s: float
-    data: List[List[float]]
+class MaterialProperties:
+    """Material neutron properties."""
+    name: str
+    macroscopic_cross_section: float  # cm^-1
+    density_g_cm3: float
 
 
-class AttenuationCalculator:
+class NeutronAttenuationCalculator:
     """
-    Neutron attenuation calculations.
+    Calculate neutron attenuation.
     """
     
     def __init__(self):
-        # Macroscopic cross sections (cm^-1) for common materials
-        self.cross_sections: Dict[str, float] = {
-            "water": 3.45,
-            "aluminum": 0.10,
-            "steel": 1.19,
-            "concrete": 0.15,
-            "polyethylene": 3.38,
-            "boron": 100.0
-        }
+        self.materials: Dict[str, MaterialProperties] = {}
     
-    def attenuation(self, material: str, thickness_cm: float) -> float:
+    def register_material(self, props: MaterialProperties):
         """
-        Compute neutron attenuation.
+        Register material.
+        
+        Args:
+            props: Properties
+        """
+        self.materials[props.name] = props
+    
+    def attenuation(self, material: str,
+                   thickness_cm: float) -> float:
+        """
+        Compute attenuation factor.
         
         Args:
             material: Material name
             thickness_cm: Thickness
         
         Returns:
-            Transmission fraction
+            Attenuation factor (transmission)
         """
-        sigma = self.cross_sections.get(material.lower(), 0.5)
+        if material not in self.materials:
+            return 1.0
+        
+        sigma = self.materials[material].macroscopic_cross_section
         return math.exp(-sigma * thickness_cm)
     
-    def thickness_from_attenuation(self, material: str,
-                                  transmission: float) -> float:
+    def transmitted_flux(self, incident_flux: float,
+                        material: str,
+                        thickness_cm: float) -> float:
         """
-        Estimate thickness from attenuation.
+        Compute transmitted neutron flux.
         
         Args:
+            incident_flux: Incident flux
             material: Material
-            transmission: Transmission
+            thickness_cm: Thickness
         
         Returns:
-            Thickness in cm
+            Transmitted flux
         """
-        sigma = self.cross_sections.get(material.lower(), 0.5)
-        if sigma <= 0 or transmission <= 0:
-            return 0.0
-        return -math.log(transmission) / sigma
-    
-    def add_material(self, name: str, cross_section_cm: float):
-        """
-        Add material cross section.
-        
-        Args:
-            name: Material name
-            cross_section_cm: Macroscopic cross section
-        """
-        self.cross_sections[name.lower()] = cross_section_cm
+        return incident_flux * self.attenuation(material, thickness_cm)
 
 
-class NeutronContrastAnalyzer:
+class ContrastEnhancer:
     """
-    Contrast analysis for neutron images.
+    Enhance neutron radiograph contrast.
     """
     
     def __init__(self):
-        self.reference_flux = 1000.0
+        pass
     
-    def contrast(self, object_flux: float,
-                background_flux: Optional[float] = None) -> float:
+    def normalize(self, image: List[float]) -> List[float]:
         """
-        Compute image contrast.
+        Normalize image.
         
         Args:
-            object_flux: Object flux
-            background_flux: Background
+            image: Image data
         
         Returns:
-            Contrast
+            Normalized image
         """
-        bg = background_flux if background_flux is not None else self.reference_flux
-        if bg <= 0:
-            return 0.0
-        return (bg - object_flux) / bg
-    
-    def signal_to_noise(self, signal: float, noise: float) -> float:
-        """
-        Compute SNR.
-        
-        Args:
-            signal: Signal
-            noise: Noise
-        
-        Returns:
-            SNR
-        """
-        if noise <= 0:
-            return float('inf')
-        return signal / noise
-    
-    def defect_map(self, image: NeutronImage,
-                  threshold: float = 0.1) -> List[List[bool]]:
-        """
-        Detect defects from neutron image.
-        
-        Args:
-            image: Neutron image
-            threshold: Threshold
-        
-        Returns:
-            Defect map
-        """
-        if not image.data:
+        if not image:
             return []
         
-        # Compute background
-        flat = [v for row in image.data for v in row]
-        bg = sum(flat) / len(flat) if flat else 1.0
+        min_val = min(image)
+        max_val = max(image)
         
-        return [[abs((bg - v) / bg) > threshold for v in row] for row in image.data]
-
-
-class NeutronScatterCorrector:
-    """
-    Neutron scatter correction.
-    """
+        if max_val == min_val:
+            return [0.5] * len(image)
+        
+        return [(v - min_val) / (max_val - min_val) for v in image]
     
-    def __init__(self):
-        self.scatter_fraction = 0.15
-    
-    def correct(self, image: NeutronImage) -> NeutronImage:
+    def histogram_equalize(self, image: List[float],
+                          bins: int = 256) -> List[float]:
         """
-        Apply scatter correction.
-        
-        Args:
-            image: Raw image
-        
-        Returns:
-            Corrected image
-        """
-        corrected = []
-        for row in image.data:
-            corrected_row = [v * (1.0 - self.scatter_fraction) for v in row]
-            corrected.append(corrected_row)
-        
-        return NeutronImage(
-            pixel_size_mm=image.pixel_size_mm,
-            exposure_s=image.exposure_s,
-            neutron_flux_n_cm2_s=image.neutron_flux_n_cm2_s,
-            data=corrected
-        )
-    
-    def dark_current_subtract(self, image: NeutronImage,
-                             dark_image: NeutronImage) -> NeutronImage:
-        """
-        Subtract dark current.
+        Histogram equalization.
         
         Args:
             image: Image
-            dark_image: Dark field
+            bins: Bins
+        
+        Returns:
+            Equalized image
+        """
+        if not image:
+            return []
+        
+        # Simple histogram equalization
+        hist = [0] * bins
+        for v in image:
+            idx = min(int(v * bins), bins - 1)
+            hist[idx] += 1
+        
+        # CDF
+        cdf = [0] * bins
+        cdf[0] = hist[0]
+        for i in range(1, bins):
+            cdf[i] = cdf[i - 1] + hist[i]
+        
+        total = len(image)
+        equalized = []
+        for v in image:
+            idx = min(int(v * bins), bins - 1)
+            eq = cdf[idx] / total
+            equalized.append(eq)
+        
+        return equalized
+
+
+class ScatteringCorrector:
+    """
+    Correct for neutron scattering.
+    """
+    
+    def __init__(self, scatter_fraction: float = 0.1):
+        """
+        Args:
+            scatter_fraction: Scattering fraction
+        """
+        self.scatter = scatter_fraction
+    
+    def correct(self, measured_image: List[float],
+               direct_image: Optional[List[float]] = None) -> List[float]:
+        """
+        Correct scattering.
+        
+        Args:
+            measured_image: Measured
+            direct_image: Direct component
         
         Returns:
             Corrected image
         """
-        corrected = []
-        for i, row in enumerate(image.data):
-            dark_row = dark_image.data[i] if i < len(dark_image.data) else [0.0] * len(row)
-            corrected_row = [max(0.0, v - d) for v, d in zip(row, dark_row)]
-            corrected.append(corrected_row)
+        if direct_image is None:
+            # Assume scattered component is scatter_fraction * measured
+            return [v / (1.0 + self.scatter) for v in measured_image]
         
-        return NeutronImage(
-            pixel_size_mm=image.pixel_size_mm,
-            exposure_s=image.exposure_s,
-            neutron_flux_n_cm2_s=image.neutron_flux_n_cm2_s,
-            data=corrected
-        )
+        return [m - self.scatter * d for m, d in zip(measured_image, direct_image)]
+
+
+class NeutronDefectDetector:
+    """
+    Detect defects in neutron radiographs.
+    """
+    
+    def __init__(self, threshold: float = 0.2):
+        """
+        Args:
+            threshold: Detection threshold
+        """
+        self.threshold = threshold
+    
+    def detect(self, image: List[float],
+              width: int, height: int) -> List[Dict]:
+        """
+        Detect defects.
+        
+        Args:
+            image: Image
+            width: Width
+            height: Height
+        
+        Returns:
+            Defects
+        """
+        # Simple threshold-based detection
+        defects = []
+        mean = sum(image) / len(image) if image else 0.0
+        
+        visited = set()
+        for i, v in enumerate(image):
+            if i in visited:
+                continue
+            
+            if abs(v - mean) > self.threshold * mean:
+                region = self._flood_fill(image, width, height,
+                                         i, mean, visited)
+                if region:
+                    vals = [image[idx] for idx in region]
+                    defects.append({
+                        "size": len(region),
+                        "contrast": max(abs(v - mean) for v in vals) / mean if mean else 0.0,
+                        "center": self._center(region, width)
+                    })
+        
+        return defects
+    
+    def _flood_fill(self, image: List[float], w: int, h: int,
+                   start: int, mean: float, visited: set) -> List[int]:
+        """Flood fill."""
+        region = []
+        stack = [start]
+        
+        while stack:
+            idx = stack.pop()
+            if idx in visited or idx < 0 or idx >= len(image):
+                continue
+            
+            if abs(image[idx] - mean) <= self.threshold * mean:
+                continue
+            
+            visited.add(idx)
+            region.append(idx)
+            
+            x = idx % w
+            y = idx // w
+            
+            for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                nx, ny = x + dx, y + dy
+                if 0 <= nx < w and 0 <= ny < h:
+                    stack.append(ny * w + nx)
+        
+        return region
+    
+    def _center(self, region: List[int], width: int) -> Tuple[int, int]:
+        """Compute center."""
+        xs = [idx % width for idx in region]
+        ys = [idx // width for idx in region]
+        return (int(sum(xs) / len(xs)), int(sum(ys) / len(ys)))
 
 
 class NeutronRadiography:
@@ -208,92 +253,71 @@ class NeutronRadiography:
     """
     
     def __init__(self):
-        self.attenuation = AttenuationCalculator()
-        self.contrast = NeutronContrastAnalyzer()
-        self.scatter = NeutronScatterCorrector()
-        self.images: List[NeutronImage] = []
-        self.defects: List[Dict] = []
+        self.attenuation = NeutronAttenuationCalculator()
+        self.enhancer = ContrastEnhancer()
+        self.scatter = ScatteringCorrector()
+        self.detector = NeutronDefectDetector()
+        self.image: List[float] = []
     
-    def capture(self, image_data: List[List[float]],
-               pixel_size_mm: float = 0.1,
-               exposure_s: float = 60.0,
-               flux: float = 1e6):
+    def register_material(self, name: str,
+                         macroscopic_cs: float,
+                         density: float):
         """
-        Capture neutron image.
+        Register material.
         
         Args:
-            image_data: Raw data
-            pixel_size_mm: Pixel size
-            exposure_s: Exposure
-            flux: Neutron flux
+            name: Name
+            macroscopic_cs: Cross section
+            density: Density
         """
-        img = NeutronImage(pixel_size_mm, exposure_s, flux, image_data)
-        self.images.append(img)
+        self.attenuation.register_material(
+            MaterialProperties(name, macroscopic_cs, density)
+        )
     
-    def detect_defects(self, threshold: float = 0.1) -> List[Dict]:
+    def capture(self, raw_image: List[float]):
         """
-        Detect defects.
+        Capture image.
         
         Args:
-            threshold: Threshold
+            raw_image: Raw image
+        """
+        self.image = raw_image[:]
+    
+    def process(self) -> List[float]:
+        """
+        Process image.
         
         Returns:
-            Defect list
+            Processed image
         """
-        if not self.images:
-            return []
-        
-        latest = self.images[-1]
-        corrected = self.scatter.correct(latest)
-        defect_map = self.contrast.defect_map(corrected, threshold)
-        
-        h = len(defect_map)
-        w = len(defect_map[0]) if h > 0 else 0
-        
-        for y in range(h):
-            for x in range(w):
-                if defect_map[y][x]:
-                    self.defects.append({
-                        "x": x,
-                        "y": y,
-                        "flux": corrected.data[y][x],
-                        "contrast": self.contrast.contrast(corrected.data[y][x])
-                    })
-        
-        return self.defects
+        # Correct scattering
+        corrected = self.scatter.correct(self.image)
+        # Enhance contrast
+        enhanced = self.enhancer.normalize(corrected)
+        return enhanced
     
-    def estimate_thickness(self, material: str,
-                          region: Tuple[int, int, int, int]) -> float:
+    def inspect(self, width: int, height: int) -> Dict:
         """
-        Estimate thickness in region.
+        Inspect for defects.
         
         Args:
-            material: Material
-            region: (x, y, w, h)
+            width: Width
+            height: Height
         
         Returns:
-            Average thickness in cm
+            Results
         """
-        if not self.images:
-            return 0.0
+        processed = self.process()
+        defects = self.detector.detect(processed, width, height)
         
-        latest = self.images[-1]
-        x0, y0, w, h = region
-        
-        transmissions = []
-        for y in range(y0, min(y0 + h, len(latest.data))):
-            for x in range(x0, min(x0 + w, len(latest.data[y]))):
-                # Normalize by reference
-                t = latest.data[y][x] / max(latest.neutron_flux_n_cm2_s, 1.0)
-                transmissions.append(t)
-        
-        avg_t = sum(transmissions) / len(transmissions) if transmissions else 1.0
-        return self.attenuation.thickness_from_attenuation(material, avg_t)
+        return {
+            "defects": len(defects),
+            "regions": defects[:3]
+        }
     
-    def radiography_summary(self) -> Dict:
+    def nr_summary(self) -> Dict:
         """Get summary."""
         return {
-            "images": len(self.images),
-            "defects": len(self.defects),
-            "materials": list(self.attenuation.cross_sections.keys())
+            "image_size": len(self.image),
+            "materials": len(self.attenuation.materials)
         }

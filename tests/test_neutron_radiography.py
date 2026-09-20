@@ -5,91 +5,92 @@ Unit tests for neutron radiography module.
 import unittest
 import sys
 import os
-import math
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from neutron_radiography import (NeutronType, NeutronImage,
-                                  AttenuationCalculator,
-                                  NeutronContrastAnalyzer,
-                                  NeutronScatterCorrector,
+from neutron_radiography import (MaterialProperties,
+                                  NeutronAttenuationCalculator,
+                                  ContrastEnhancer,
+                                  ScatteringCorrector,
+                                  NeutronDefectDetector,
                                   NeutronRadiography)
 
 
-class TestAttenuationCalculator(unittest.TestCase):
+class TestNeutronAttenuationCalculator(unittest.TestCase):
     """Test attenuation."""
     
     def setUp(self):
-        self.ac = AttenuationCalculator()
+        self.nac = NeutronAttenuationCalculator()
+        self.nac.register_material(MaterialProperties("water", 3.45, 1.0))
     
     def test_attenuation(self):
         """Should compute attenuation."""
-        t = self.ac.attenuation("water", 1.0)
-        self.assertGreater(t, 0)
-        self.assertLess(t, 1.0)
-        print(f"  [PASS] Att: {t:.4f}")
+        a = self.nac.attenuation("water", 0.1)
+        self.assertLess(a, 1.0)
+        print(f"  [PASS] Att: {a:.4f}")
     
-    def test_thickness(self):
-        """Should estimate thickness."""
-        thick = self.ac.thickness_from_attenuation("water", 0.03)
-        self.assertGreater(thick, 0)
-        print(f"  [PASS] Thick: {thick:.4f} cm")
-    
-    def test_add_material(self):
-        """Should add material."""
-        self.ac.add_material("custom", 2.0)
-        t = self.ac.attenuation("custom", 1.0)
-        self.assertAlmostEqual(t, math.exp(-2.0), places=5)
-        print("  [PASS] AddMat")
+    def test_transmitted(self):
+        """Should compute transmitted flux."""
+        t = self.nac.transmitted_flux(1000.0, "water", 0.1)
+        self.assertLess(t, 1000.0)
+        print(f"  [PASS] Flux: {t:.2f}")
 
 
-class TestNeutronContrastAnalyzer(unittest.TestCase):
-    """Test contrast."""
+class TestContrastEnhancer(unittest.TestCase):
+    """Test enhancer."""
     
     def setUp(self):
-        self.ca = NeutronContrastAnalyzer()
+        self.ce = ContrastEnhancer()
     
-    def test_contrast(self):
-        """Should compute contrast."""
-        c = self.ca.contrast(800.0, 1000.0)
-        self.assertEqual(c, 0.2)
-        print(f"  [PASS] Contrast: {c}")
+    def test_normalize(self):
+        """Should normalize."""
+        img = [0.0, 0.5, 1.0]
+        n = self.ce.normalize(img)
+        self.assertEqual(n[0], 0.0)
+        self.assertEqual(n[-1], 1.0)
+        print(f"  [PASS] Norm: {n}")
     
-    def test_snr(self):
-        """Should compute SNR."""
-        snr = self.ca.signal_to_noise(100.0, 10.0)
-        self.assertEqual(snr, 10.0)
-        print(f"  [PASS] SNR: {snr}")
-    
-    def test_defect_map(self):
-        """Should detect defects."""
-        img = NeutronImage(0.1, 60.0, 1e6, [[1.0]*5 for _ in range(5)])
-        img.data[2][2] = 0.5
-        dm = self.ca.defect_map(img, 0.1)
-        self.assertTrue(any(any(row) for row in dm))
-        print("  [PASS] DefectMap")
+    def test_histogram(self):
+        """Should equalize."""
+        img = [0.0, 0.25, 0.5, 0.75, 1.0]
+        e = self.ce.histogram_equalize(img)
+        self.assertEqual(len(e), 5)
+        print("  [PASS] Hist")
 
 
-class TestNeutronScatterCorrector(unittest.TestCase):
-    """Test scatter correction."""
+class TestScatteringCorrector(unittest.TestCase):
+    """Test corrector."""
     
     def setUp(self):
-        self.sc = NeutronScatterCorrector()
+        self.sc = ScatteringCorrector(0.1)
     
     def test_correct(self):
-        """Should correct scatter."""
-        img = NeutronImage(0.1, 60.0, 1e6, [[1.0]*3 for _ in range(3)])
+        """Should correct."""
+        img = [1.1, 1.1, 1.1]
         c = self.sc.correct(img)
-        self.assertAlmostEqual(c.data[0][0], 0.85, places=5)
-        print("  [PASS] Scatter")
+        self.assertAlmostEqual(c[0], 1.0, places=1)
+        print(f"  [PASS] Corr: {c}")
+
+
+class TestNeutronDefectDetector(unittest.TestCase):
+    """Test detector."""
     
-    def test_dark(self):
-        """Should subtract dark."""
-        img = NeutronImage(0.1, 60.0, 1e6, [[1.0]*3 for _ in range(3)])
-        dark = NeutronImage(0.1, 60.0, 1e6, [[0.2]*3 for _ in range(3)])
-        c = self.sc.dark_current_subtract(img, dark)
-        self.assertAlmostEqual(c.data[0][0], 0.8, places=5)
-        print("  [PASS] Dark")
+    def setUp(self):
+        self.ndd = NeutronDefectDetector(0.3)
+    
+    def test_detect(self):
+        """Should detect defects."""
+        img = [1.0] * 8 + [2.0, 2.0]
+        d = self.ndd.detect(img, 5, 2)
+        self.assertGreater(len(d), 0)
+        print(f"  [PASS] Def: {len(d)}")
+    
+    def test_no_defect(self):
+        """Should not detect uniform."""
+        img = [1.0] * 10
+        d = self.ndd.detect(img, 5, 2)
+        self.assertEqual(len(d), 0)
+        print("  [PASS] NoDef")
 
 
 class TestNeutronRadiography(unittest.TestCase):
@@ -98,33 +99,37 @@ class TestNeutronRadiography(unittest.TestCase):
     def setUp(self):
         self.nr = NeutronRadiography()
     
+    def test_register(self):
+        """Should register material."""
+        self.nr.register_material("water", 3.45, 1.0)
+        self.assertEqual(len(self.nr.attenuation.materials), 1)
+        print("  [PASS] Reg")
+    
     def test_capture(self):
         """Should capture."""
-        self.nr.capture([[1.0]*5 for _ in range(5)])
-        self.assertEqual(len(self.nr.images), 1)
-        print("  [PASS] Capture")
+        self.nr.capture([0.5, 0.6, 0.7])
+        self.assertEqual(len(self.nr.image), 3)
+        print("  [PASS] Cap")
     
-    def test_detect(self):
-        """Should detect."""
-        d = [[1.0]*5 for _ in range(5)]
-        d[2][2] = 0.3
-        self.nr.capture(d)
-        defects = self.nr.detect_defects(0.1)
-        self.assertGreater(len(defects), 0)
-        print(f"  [PASS] Detect: {len(defects)} defects")
+    def test_process(self):
+        """Should process."""
+        self.nr.capture([0.5, 0.6, 0.7])
+        p = self.nr.process()
+        self.assertEqual(len(p), 3)
+        print("  [PASS] Proc")
     
-    def test_thickness(self):
-        """Should estimate thickness."""
-        self.nr.capture([[math.exp(-3.45)]*5 for _ in range(5)])
-        t = self.nr.estimate_thickness("water", (0, 0, 5, 5))
-        self.assertGreater(t, 0)
-        print(f"  [PASS] Thick: {t:.4f} cm")
+    def test_inspect(self):
+        """Should inspect."""
+        img = [1.0] * 8 + [2.0, 2.0]
+        self.nr.capture(img)
+        r = self.nr.inspect(5, 2)
+        self.assertIn("defects", r)
+        print(f"  [PASS] Insp: {r}")
     
     def test_summary(self):
         """Should summarize."""
-        self.nr.capture([[1.0]*3 for _ in range(3)])
-        s = self.nr.radiography_summary()
-        self.assertIn("images", s)
+        s = self.nr.nr_summary()
+        self.assertIn("image_size", s)
         print(f"  [PASS] Sum: {s}")
 
 
