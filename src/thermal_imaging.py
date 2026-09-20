@@ -1,243 +1,322 @@
 """
 Thermal Imaging Module
-Temperature distribution analysis, hotspot detection,
-thermal gradient computation, and emissivity correction
-for autonomous non-destructive inspection.
+Infrared thermography, thermal pattern analysis, hot spot detection,
+temperature gradient mapping, and emissivity correction for autonomous NDT.
 """
 
 import math
 from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass
-from enum import Enum
-
-
-class TemperatureUnit(Enum):
-    """Temperature units."""
-    CELSIUS = "C"
-    FAHRENHEIT = "F"
-    KELVIN = "K"
 
 
 @dataclass
 class ThermalPixel:
-    """A single thermal image pixel."""
+    """Thermal image pixel."""
     x: int
     y: int
-    temperature_C: float
-    emissivity: float = 0.95
+    temp_C: float
 
 
-class TemperatureConverter:
+class InfraredCamera:
     """
-    Convert between temperature units.
-    """
-    
-    @staticmethod
-    def celsius_to_kelvin(c: float) -> float:
-        """C to K."""
-        return c + 273.15
-    
-    @staticmethod
-    def kelvin_to_celsius(k: float) -> float:
-        """K to C."""
-        return k - 273.15
-    
-    @staticmethod
-    def celsius_to_fahrenheit(c: float) -> float:
-        """C to F."""
-        return c * 9.0 / 5.0 + 32.0
-    
-    @staticmethod
-    def fahrenheit_to_celsius(f: float) -> float:
-        """F to C."""
-        return (f - 32.0) * 5.0 / 9.0
-
-
-class HotspotDetector:
-    """
-    Detect thermal hotspots and coldspots.
+    Infrared camera simulation.
     """
     
-    def __init__(self, threshold_delta_K: float = 10.0):
+    def __init__(self, resolution: Tuple[int, int] = (320, 240),
+                 spectral_range_um: Tuple[float, float] = (7.5, 14.0),
+                 noise_equivalent_deltaT_mK: float = 50.0):
         """
         Args:
-            threshold_delta_K: Temperature difference threshold
+            resolution: Image resolution
+            spectral_range_um: Spectral range
+            noise_equivalent_deltaT_mK: NETD
+        """
+        self.resolution = resolution
+        self.spectral_range = spectral_range_um
+        self.NETD = noise_equivalent_deltaT_mK / 1000.0
+    
+    def capture(self, ambient_C: float = 20.0,
+               hot_spots: Optional[List[Tuple[int, int, float]]] = None
+              ) -> List[List[float]]:
+        """
+        Capture thermal image.
+        
+        Args:
+            ambient_C: Ambient temperature
+            hot_spots: List of (x, y, temp_C)
+        
+        Returns:
+            2D temperature array
+        """
+        import random
+        w, h = self.resolution
+        image = []
+        
+        for y in range(h):
+            row = []
+            for x in range(w):
+                temp = ambient_C + random.gauss(0, self.NETD)
+                row.append(temp)
+            image.append(row)
+        
+        # Add hot spots
+        if hot_spots:
+            for (hx, hy, htemp) in hot_spots:
+                if 0 <= hx < w and 0 <= hy < h:
+                    # Gaussian spread
+                    for dy in range(-5, 6):
+                        for dx in range(-5, 6):
+                            nx, ny = hx + dx, hy + dy
+                            if 0 <= nx < w and 0 <= ny < h:
+                                dist = math.sqrt(dx**2 + dy**2)
+                                factor = math.exp(-dist**2 / 8.0)
+                                image[ny][nx] += (htemp - ambient_C) * factor
+        
+        return image
+    
+    def min_max_temp(self, image: List[List[float]]) -> Tuple[float, float]:
+        """
+        Find min/max temperature.
+        
+        Args:
+            image: Thermal image
+        
+        Returns:
+            (min, max)
+        """
+        all_temps = [t for row in image for t in row]
+        return (min(all_temps), max(all_temps))
+
+
+class HotSpotDetector:
+    """
+    Detect hot spots in thermal images.
+    """
+    
+    def __init__(self, threshold_delta_K: float = 5.0):
+        """
+        Args:
+            threshold_delta_K: Threshold above ambient
         """
         self.threshold = threshold_delta_K
     
-    def detect(self, pixels: List[ThermalPixel]) -> List[ThermalPixel]:
+    def detect(self, image: List[List[float]],
+              ambient_C: float = 20.0) -> List[Dict]:
         """
-        Detect hotspots.
+        Detect hot spots.
         
         Args:
-            pixels: Thermal image pixels
+            image: Thermal image
+            ambient_C: Ambient temperature
         
         Returns:
-            Hotspot pixels
+            List of hot spot dicts
         """
-        if not pixels:
-            return []
+        hotspots = []
+        h = len(image)
+        if h == 0:
+            return hotspots
+        w = len(image[0])
         
-        avg_temp = sum(p.temperature_C for p in pixels) / len(pixels)
-        return [p for p in pixels if p.temperature_C - avg_temp > self.threshold]
-    
-    def max_temperature(self, pixels: List[ThermalPixel]) -> float:
-        """
-        Find maximum temperature.
+        for y in range(h):
+            for x in range(w):
+                if image[y][x] - ambient_C >= self.threshold:
+                    # Check if local maximum
+                    is_max = True
+                    for dy in [-1, 0, 1]:
+                        for dx in [-1, 0, 1]:
+                            nx, ny = x + dx, y + dy
+                            if (0 <= nx < w and 0 <= ny < h and
+                                image[ny][nx] > image[y][x]):
+                                is_max = False
+                                break
+                        if not is_max:
+                            break
+                    
+                    if is_max:
+                        hotspots.append({
+                            "x": x, "y": y,
+                            "temp_C": image[y][x],
+                            "delta_K": image[y][x] - ambient_C
+                        })
         
-        Args:
-            pixels: Pixels
-        
-        Returns:
-            Max temperature
-        """
-        if not pixels:
-            return 0.0
-        return max(p.temperature_C for p in pixels)
-    
-    def min_temperature(self, pixels: List[ThermalPixel]) -> float:
-        """
-        Find minimum temperature.
-        
-        Args:
-            pixels: Pixels
-        
-        Returns:
-            Min temperature
-        """
-        if not pixels:
-            return 0.0
-        return min(p.temperature_C for p in pixels)
-    
-    def thermal_uniformity(self, pixels: List[ThermalPixel]) -> float:
-        """
-        Compute thermal uniformity index.
-        
-        Args:
-            pixels: Pixels
-        
-        Returns:
-            Uniformity (0=non-uniform, 1=uniform)
-        """
-        if len(pixels) < 2:
-            return 1.0
-        
-        temps = [p.temperature_C for p in pixels]
-        avg = sum(temps) / len(temps)
-        if avg == 0:
-            return 1.0
-        
-        std = math.sqrt(sum((t - avg)**2 for t in temps) / len(temps))
-        # Lower std relative to avg = more uniform
-        return max(0.0, 1.0 - std / abs(avg))
+        return hotspots
 
 
-class ThermalGradient:
+class TemperatureGradientMapper:
     """
-    Compute thermal gradients.
+    Map temperature gradients.
     """
     
     def __init__(self):
         pass
     
-    def gradient_x(self, pixels: List[ThermalPixel],
-                  grid_width: int) -> List[float]:
-        """
-        Compute horizontal gradient.
-        
-        Args:
-            pixels: Pixels in row-major order
-            grid_width: Image width
-        
-        Returns:
-            Gradient values
-        """
-        grads = []
-        for i, p in enumerate(pixels):
-            if i % grid_width == grid_width - 1:
-                grads.append(0.0)
-            elif i + 1 < len(pixels):
-                grads.append(pixels[i + 1].temperature_C - p.temperature_C)
-            else:
-                grads.append(0.0)
-        return grads
-    
-    def gradient_magnitude(self, pixels: List[ThermalPixel],
-                          grid_width: int) -> List[float]:
+    def gradient_magnitude(self, image: List[List[float]]) -> List[List[float]]:
         """
         Compute gradient magnitude.
         
         Args:
-            pixels: Pixels
-            grid_width: Image width
+            image: Thermal image
         
         Returns:
-            Gradient magnitudes
+            Gradient magnitude image
         """
-        gx = self.gradient_x(pixels, grid_width)
-        gy = []
-        for i, p in enumerate(pixels):
-            below = i + grid_width
-            if below < len(pixels):
-                gy.append(pixels[below].temperature_C - p.temperature_C)
-            else:
-                gy.append(0.0)
+        h = len(image)
+        if h == 0:
+            return []
+        w = len(image[0])
         
-        return [math.sqrt(gx[i]**2 + gy[i]**2) for i in range(len(pixels))]
+        grad = []
+        for y in range(h):
+            row = []
+            for x in range(w):
+                # Central differences
+                dx = (image[y][min(x+1, w-1)] - image[y][max(x-1, 0)]) / 2.0
+                dy = (image[min(y+1, h-1)][x] - image[max(y-1, 0)][x]) / 2.0
+                row.append(math.sqrt(dx**2 + dy**2))
+            grad.append(row)
+        
+        return grad
     
-    def max_gradient(self, pixels: List[ThermalPixel],
-                    grid_width: int) -> float:
+    def max_gradient(self, image: List[List[float]]) -> float:
         """
         Find maximum gradient.
         
         Args:
-            pixels: Pixels
-            grid_width: Image width
+            image: Thermal image
         
         Returns:
-            Max gradient
+            Maximum gradient
         """
-        grads = self.gradient_magnitude(pixels, grid_width)
-        return max(grads) if grads else 0.0
+        grad = self.gradient_magnitude(image)
+        all_grads = [g for row in grad for g in row]
+        return max(all_grads) if all_grads else 0.0
 
 
 class EmissivityCorrector:
     """
-    Correct temperature for emissivity.
+    Correct for emissivity.
     """
     
     def __init__(self):
-        self.ambient_temp_C = 25.0
+        self.stefan_boltzmann = 5.670374e-8  # W/m2/K4
     
-    def correct_temperature(self, measured_temp_C: float,
-                           emissivity: float) -> float:
+    def correct_temperature(self, apparent_temp_C: float,
+                           emissivity: float,
+                           reflected_temp_C: float = 20.0) -> float:
         """
         Correct temperature for emissivity.
         
-        Uses simplified correction: T_true^4 = (T_meas^4 - (1-eps)*T_amb^4) / eps
-        
         Args:
-            measured_temp_C: Measured temperature
-            emissivity: Surface emissivity
+            apparent_temp_C: Apparent temperature
+            emissivity: Emissivity (0-1)
+            reflected_temp_C: Reflected temperature
         
         Returns:
-            Corrected temperature
+            Corrected temperature in C
         """
-        if emissivity <= 0 or emissivity > 1:
-            return measured_temp_C
+        if emissivity <= 0 or emissivity > 1.0:
+            return apparent_temp_C
         
-        t_meas_K = measured_temp_C + 273.15
-        t_amb_K = self.ambient_temp_C + 273.15
+        Ta = apparent_temp_C + 273.15
+        Tr = reflected_temp_C + 273.15
         
-        t_true_K4 = (t_meas_K**4 - (1.0 - emissivity) * t_amb_K**4) / emissivity
-        if t_true_K4 <= 0:
-            return measured_temp_C
+        # True radiance = (apparent - (1-e)*reflected) / e
+        true_T4 = (Ta**4 - (1.0 - emissivity) * Tr**4) / emissivity
         
-        return t_true_K4**0.25 - 273.15
+        if true_T4 <= 0:
+            return apparent_temp_C
+        
+        return true_T4 ** 0.25 - 273.15
     
-    def set_ambient(self, temp_C: float):
-        """Set ambient temperature."""
-        self.ambient_temp_C = temp_C
+    def estimate_emissivity(self, true_temp_C: float,
+                           apparent_temp_C: float,
+                           reflected_temp_C: float = 20.0) -> float:
+        """
+        Estimate emissivity.
+        
+        Args:
+            true_temp_C: True temperature
+            apparent_temp_C: Apparent temperature
+            reflected_temp_C: Reflected temperature
+        
+        Returns:
+            Emissivity
+        """
+        Tt = true_temp_C + 273.15
+        Ta = apparent_temp_C + 273.15
+        Tr = reflected_temp_C + 273.15
+        
+        denom = Tt**4 - Tr**4
+        if abs(denom) < 1e-10:
+            return 1.0
+        
+        e = (Ta**4 - Tr**4) / denom
+        return max(0.0, min(1.0, e))
+
+
+class ThermalPatternAnalyzer:
+    """
+    Analyze thermal patterns.
+    """
+    
+    def __init__(self):
+        pass
+    
+    def thermal_uniformity(self, image: List[List[float]]) -> float:
+        """
+        Compute thermal uniformity.
+        
+        Args:
+            image: Thermal image
+        
+        Returns:
+            Uniformity index
+        """
+        all_temps = [t for row in image for t in row]
+        if not all_temps:
+            return 0.0
+        
+        mean = sum(all_temps) / len(all_temps)
+        variance = sum((t - mean)**2 for t in all_temps) / len(all_temps)
+        std = math.sqrt(variance)
+        
+        # Coefficient of variation
+        if mean != 0:
+            return std / abs(mean)
+        return 0.0
+    
+    def thermal_histogram(self, image: List[List[float]],
+                         bins: int = 10) -> Dict:
+        """
+        Compute thermal histogram.
+        
+        Args:
+            image: Thermal image
+            bins: Number of bins
+        
+        Returns:
+            Histogram dict
+        """
+        all_temps = [t for row in image for t in row]
+        if not all_temps:
+            return {}
+        
+        t_min = min(all_temps)
+        t_max = max(all_temps)
+        bin_width = (t_max - t_min) / bins if t_max > t_min else 1.0
+        
+        counts = [0] * bins
+        for t in all_temps:
+            idx = min(int((t - t_min) / bin_width), bins - 1)
+            counts[idx] += 1
+        
+        return {
+            "min_C": t_min,
+            "max_C": t_max,
+            "bin_width": bin_width,
+            "counts": counts
+        }
 
 
 class ThermalImaging:
@@ -246,55 +325,52 @@ class ThermalImaging:
     """
     
     def __init__(self):
-        self.hotspot = HotspotDetector()
-        self.gradient = ThermalGradient()
+        self.camera = InfraredCamera()
+        self.detector = HotSpotDetector()
+        self.gradient = TemperatureGradientMapper()
         self.emissivity = EmissivityCorrector()
-        self.converter = TemperatureConverter()
-        self.pixels: List[ThermalPixel] = []
+        self.pattern = ThermalPatternAnalyzer()
+        self.image: List[List[float]] = []
     
-    def load_pixels(self, pixels: List[ThermalPixel]):
-        """Load thermal image."""
-        self.pixels = pixels
-    
-    def thermal_report(self, grid_width: int = 0) -> Dict:
+    def inspect(self, ambient_C: float = 20.0,
+               hot_spots: Optional[List[Tuple[int, int, float]]] = None):
         """
-        Generate thermal report.
+        Perform thermal inspection.
         
         Args:
-            grid_width: Image width (0 = no gradient)
+            ambient_C: Ambient temperature
+            hot_spots: Known hot spots
+        """
+        self.image = self.camera.capture(ambient_C, hot_spots)
+    
+    def analyze(self) -> Dict:
+        """
+        Analyze thermal image.
         
         Returns:
-            Report dict
+            Results
         """
-        if not self.pixels:
-            return {"status": "no_data"}
+        if not self.image:
+            return {}
         
-        hotspots = self.hotspot.detect(self.pixels)
+        t_min, t_max = self.camera.min_max_temp(self.image)
+        hotspots = self.detector.detect(self.image, 20.0)
+        max_grad = self.gradient.max_gradient(self.image)
+        uniformity = self.pattern.thermal_uniformity(self.image)
+        hist = self.pattern.thermal_histogram(self.image, 5)
         
-        report = {
-            "num_pixels": len(self.pixels),
-            "max_temp_C": self.hotspot.max_temperature(self.pixels),
-            "min_temp_C": self.hotspot.min_temperature(self.pixels),
-            "avg_temp_C": sum(p.temperature_C for p in self.pixels) / len(self.pixels),
-            "hotspots": len(hotspots),
-            "uniformity": self.hotspot.thermal_uniformity(self.pixels)
+        return {
+            "min_temp_C": t_min,
+            "max_temp_C": t_max,
+            "hot_spots": len(hotspots),
+            "max_gradient_K_px": max_grad,
+            "uniformity": uniformity,
+            "histogram": hist
         }
-        
-        if grid_width > 0:
-            report["max_gradient"] = self.gradient.max_gradient(self.pixels, grid_width)
-        
-        return report
     
-    def pass_fail(self, max_temp_C: float = 80.0) -> bool:
-        """
-        Check if within thermal limits.
-        
-        Args:
-            max_temp_C: Maximum allowed temperature
-        
-        Returns:
-            True if passes
-        """
-        if not self.pixels:
-            return False
-        return self.hotspot.max_temperature(self.pixels) <= max_temp_C
+    def ti_summary(self) -> Dict:
+        """Get summary."""
+        return {
+            "resolution": self.camera.resolution,
+            "image_ready": len(self.image) > 0
+        }
