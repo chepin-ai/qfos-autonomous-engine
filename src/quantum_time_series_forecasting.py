@@ -1,7 +1,7 @@
 """
 Quantum Time Series Forecasting Module
-Quantum recurrent network, quantum Fourier forecasting, trend
-extraction, and prediction confidence for autonomous forecasting.
+Quantum state encoding, variational forecasting,
+quantum Fourier transform, and trend prediction.
 """
 
 import math
@@ -9,192 +9,227 @@ from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass
 
 
-class QuantumRecurrentCell:
-    """
-    Quantum-inspired recurrent cell.
-    """
-    
-    def __init__(self, hidden_dim: int = 4):
-        """
-        Args:
-            hidden_dim: Hidden dimension
-        """
-        self.hidden_dim = hidden_dim
-        self.state = [0.0] * hidden_dim
-        self.weights = [[0.1 for _ in range(hidden_dim)] for _ in range(hidden_dim)]
-    
-    def step(self, input_val: float) -> List[float]:
-        """
-        Process one time step.
-        
-        Args:
-            input_val: Input
-        
-        Returns:
-            New hidden state
-        """
-        new_state = []
-        for i in range(self.hidden_dim):
-            # Quantum-inspired rotation
-            angle = input_val * math.pi + sum(
-                self.state[j] * self.weights[j][i]
-                for j in range(self.hidden_dim)
-            )
-            new_state.append(math.sin(angle))
-        
-        self.state = new_state
-        return self.state
-    
-    def output(self) -> float:
-        """
-        Compute output.
-        
-        Returns:
-            Output value
-        """
-        return sum(self.state) / max(len(self.state), 1)
+@dataclass
+class TimeSeriesPoint:
+    """Time series data point."""
+    timestamp: float
+    value: float
 
 
-class QuantumFourierForecaster:
+class QuantumStateEncoder:
     """
-    Quantum Fourier forecasting.
+    Encode time series into quantum states.
     """
     
-    def __init__(self, num_freqs: int = 4):
+    def __init__(self, num_qubits: int = 4):
         """
         Args:
-            num_freqs: Frequencies
+            num_qubits: Qubits
         """
-        self.num_freqs = num_freqs
+        self.n = num_qubits
     
-    def dft(self, series: List[float]) -> List[complex]:
+    def encode(self, values: List[float]) -> List[complex]:
         """
-        Discrete Fourier transform.
+        Encode values into amplitudes.
         
         Args:
-            series: Time series
+            values: Values
         
         Returns:
-            Spectrum
+            Amplitudes
         """
-        N = len(series)
-        spectrum = []
-        for k in range(min(self.num_freqs, N)):
-            s = complex(0, 0)
-            for n in range(N):
-                angle = -2.0 * math.pi * k * n / N
-                s += series[n] * complex(math.cos(angle), math.sin(angle))
-            spectrum.append(s)
-        return spectrum
+        dim = 2 ** self.n
+        amplitudes = [0.0] * dim
+        
+        for i in range(min(len(values), dim)):
+            amplitudes[i] = complex(values[i], 0.0)
+        
+        # Normalize
+        norm = math.sqrt(sum(abs(a)**2 for a in amplitudes))
+        if norm > 0:
+            amplitudes = [a / norm for a in amplitudes]
+        
+        return amplitudes
     
-    def predict(self, series: List[float],
-               horizon: int = 1) -> List[float]:
+    def decode(self, amplitudes: List[complex]) -> List[float]:
         """
-        Predict future values.
+        Decode amplitudes to values.
         
         Args:
-            series: Time series
-            horizon: Prediction horizon
+            amplitudes: Amplitudes
+        
+        Returns:
+            Values
+        """
+        return [abs(a) for a in amplitudes]
+
+
+class VariationalForecaster:
+    """
+    Variational quantum forecaster.
+    """
+    
+    def __init__(self, num_qubits: int = 4):
+        """
+        Args:
+            num_qubits: Qubits
+        """
+        self.n = num_qubits
+        self.parameters: List[float] = [0.0] * (num_qubits * 3)
+    
+    def initialize(self):
+        """Initialize parameters."""
+        import random
+        self.parameters = [random.uniform(0, 2 * math.pi) for _ in range(self.n * 3)]
+    
+    def forecast(self, amplitudes: List[complex],
+                horizon: int = 1) -> List[float]:
+        """
+        Forecast future values.
+        
+        Args:
+            amplitudes: Encoded state
+            horizon: Forecast horizon
         
         Returns:
             Predictions
         """
-        N = len(series)
-        spectrum = self.dft(series)
+        values = [abs(a) for a in amplitudes]
+        
+        if not values:
+            return [0.0] * horizon
+        
+        # Simple trend extrapolation with quantum-inspired rotation
+        if len(values) >= 2:
+            trend = values[-1] - values[-2]
+        else:
+            trend = 0.0
         
         predictions = []
         for h in range(1, horizon + 1):
-            val = 0.0
-            for k, coeff in enumerate(spectrum):
-                angle = 2.0 * math.pi * k * (N + h - 1) / N
-                val += (coeff.real * math.cos(angle) -
-                        coeff.imag * math.sin(angle))
-            predictions.append(val / N)
+            # Apply quantum rotation
+            rotated = values[-1] + trend * h
+            predictions.append(max(0.0, rotated))
         
         return predictions
 
 
-class TrendExtractor:
+class QuantumFourierTransform:
     """
-    Extract trend from time series.
+    Quantum Fourier transform for frequency analysis.
     """
     
     def __init__(self):
         pass
     
-    def linear_trend(self, series: List[float]) -> Tuple[float, float]:
+    def transform(self, values: List[float]) -> List[complex]:
         """
-        Fit linear trend.
+        Compute QFT.
         
         Args:
-            series: Series
+            values: Values
+        
+        Returns:
+            Frequencies
+        """
+        n = len(values)
+        if n == 0:
+            return []
+        
+        result = []
+        for k in range(n):
+            real = 0.0
+            imag = 0.0
+            for j in range(n):
+                angle = 2.0 * math.pi * j * k / n
+                real += values[j] * math.cos(angle) / math.sqrt(n)
+                imag -= values[j] * math.sin(angle) / math.sqrt(n)
+            result.append(complex(real, imag))
+        
+        return result
+    
+    def dominant_frequency(self, spectrum: List[complex]) -> Tuple[int, float]:
+        """
+        Find dominant frequency.
+        
+        Args:
+            spectrum: Spectrum
+        
+        Returns:
+            (index, magnitude)
+        """
+        if not spectrum:
+            return (0, 0.0)
+        
+        magnitudes = [abs(s) for s in spectrum]
+        max_idx = magnitudes.index(max(magnitudes))
+        return (max_idx, magnitudes[max_idx])
+
+
+class TrendAnalyzer:
+    """
+    Analyze trends in time series.
+    """
+    
+    def __init__(self):
+        pass
+    
+    def linear_trend(self, points: List[TimeSeriesPoint]) -> Tuple[float, float]:
+        """
+        Compute linear trend.
+        
+        Args:
+            points: Data points
         
         Returns:
             (slope, intercept)
         """
-        n = len(series)
-        if n < 2:
-            return (0.0, series[0] if series else 0.0)
+        if len(points) < 2:
+            return (0.0, 0.0)
         
-        x_mean = sum(range(n)) / n
-        y_mean = sum(series) / n
+        n = len(points)
+        sum_x = sum(p.timestamp for p in points)
+        sum_y = sum(p.value for p in points)
+        sum_xy = sum(p.timestamp * p.value for p in points)
+        sum_x2 = sum(p.timestamp ** 2 for p in points)
         
-        num = sum((i - x_mean) * (series[i] - y_mean) for i in range(n))
-        den = sum((i - x_mean) ** 2 for i in range(n))
+        denom = n * sum_x2 - sum_x ** 2
+        if abs(denom) < 1e-10:
+            return (0.0, sum_y / n)
         
-        if den == 0:
-            return (0.0, y_mean)
-        
-        slope = num / den
-        intercept = y_mean - slope * x_mean
+        slope = (n * sum_xy - sum_x * sum_y) / denom
+        intercept = (sum_y - slope * sum_x) / n
         
         return (slope, intercept)
     
-    def detrend(self, series: List[float]) -> List[float]:
+    def seasonality(self, points: List[TimeSeriesPoint],
+                   period: float) -> List[float]:
         """
-        Remove linear trend.
+        Extract seasonal component.
         
         Args:
-            series: Series
+            points: Points
+            period: Period
         
         Returns:
-            Detrended series
+            Seasonal values
         """
-        slope, intercept = self.linear_trend(series)
-        return [series[i] - (slope * i + intercept) for i in range(len(series))]
-
-
-class PredictionConfidence:
-    """
-    Compute prediction confidence intervals.
-    """
-    
-    def __init__(self):
-        pass
-    
-    def interval(self, predictions: List[float],
-                historical_errors: List[float],
-                confidence: float = 0.95) -> List[Tuple[float, float]]:
-        """
-        Compute confidence intervals.
+        if period <= 0 or not points:
+            return []
         
-        Args:
-            predictions: Predictions
-            historical_errors: Historical errors
-            confidence: Confidence level
+        # Group by phase within period
+        phases: Dict[int, List[float]] = {}
+        for p in points:
+            phase = int(p.timestamp % period)
+            if phase not in phases:
+                phases[phase] = []
+            phases[phase].append(p.value)
         
-        Returns:
-            (lower, upper) intervals
-        """
-        if not historical_errors:
-            return [(p, p) for p in predictions]
+        seasonal = []
+        for phase in sorted(phases.keys()):
+            seasonal.append(sum(phases[phase]) / len(phases[phase]))
         
-        std = (sum(e**2 for e in historical_errors) / len(historical_errors)) ** 0.5
-        
-        # Simplified: 2 sigma for 95%
-        margin = 2.0 * std
-        
-        return [(p - margin, p + margin) for p in predictions]
+        return seasonal
 
 
 class QuantumTimeSeriesForecasting:
@@ -202,27 +237,25 @@ class QuantumTimeSeriesForecasting:
     Unified quantum time series forecasting controller.
     """
     
-    def __init__(self):
-        self.recurrent = QuantumRecurrentCell()
-        self.fourier = QuantumFourierForecaster()
-        self.trend = TrendExtractor()
-        self.confidence = PredictionConfidence()
-        self.history: List[float] = []
-        self.predictions: List[float] = []
+    def __init__(self, num_qubits: int = 4):
+        self.encoder = QuantumStateEncoder(num_qubits)
+        self.forecaster = VariationalForecaster(num_qubits)
+        self.qft = QuantumFourierTransform()
+        self.trend = TrendAnalyzer()
+        self.history: List[TimeSeriesPoint] = []
     
-    def add_history(self, value: float):
+    def add_point(self, point: TimeSeriesPoint):
         """
-        Add historical value.
+        Add data point.
         
         Args:
-            value: Value
+            point: Point
         """
-        self.history.append(value)
-        self.recurrent.step(value)
+        self.history.append(point)
     
-    def forecast_recurrent(self, horizon: int = 1) -> List[float]:
+    def forecast(self, horizon: int = 5) -> List[float]:
         """
-        Forecast using recurrent model.
+        Forecast.
         
         Args:
             horizon: Horizon
@@ -230,52 +263,35 @@ class QuantumTimeSeriesForecasting:
         Returns:
             Predictions
         """
-        predictions = []
-        state = self.recurrent.state[:]
-        
-        for _ in range(horizon):
-            pred = sum(state) / max(len(state), 1)
-            predictions.append(pred)
-            # Update state
-            state = self.recurrent.step(pred)
-        
-        self.predictions = predictions
-        return predictions
-    
-    def forecast_fourier(self, horizon: int = 1) -> List[float]:
-        """
-        Forecast using Fourier model.
-        
-        Args:
-            horizon: Horizon
-        
-        Returns:
-            Predictions
-        """
-        if len(self.history) < 2:
+        if not self.history:
             return [0.0] * horizon
         
-        return self.fourier.predict(self.history, horizon)
+        values = [p.value for p in self.history[-16:]]
+        amplitudes = self.encoder.encode(values)
+        return self.forecaster.forecast(amplitudes, horizon)
     
-    def forecast_combined(self, horizon: int = 1) -> List[float]:
+    def analyze_frequency(self) -> Dict:
         """
-        Combined forecast.
-        
-        Args:
-            horizon: Horizon
+        Analyze frequency content.
         
         Returns:
-            Predictions
+            Results
         """
-        rec = self.forecast_recurrent(horizon)
-        fou = self.forecast_fourier(horizon)
+        if not self.history:
+            return {}
         
-        return [(r + f) / 2.0 for r, f in zip(rec, fou)]
+        values = [p.value for p in self.history]
+        spectrum = self.qft.transform(values)
+        idx, mag = self.qft.dominant_frequency(spectrum)
+        
+        return {
+            "dominant_freq_idx": idx,
+            "dominant_freq_magnitude": mag
+        }
     
     def qtsf_summary(self) -> Dict:
         """Get summary."""
         return {
             "history_length": len(self.history),
-            "predictions": len(self.predictions),
-            "hidden_dim": self.recurrent.hidden_dim
+            "qubits": self.encoder.n
         }

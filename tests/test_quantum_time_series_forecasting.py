@@ -5,128 +5,121 @@ Unit tests for quantum time series forecasting module.
 import unittest
 import sys
 import os
+import math
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from quantum_time_series_forecasting import (QuantumRecurrentCell,
-                                              QuantumFourierForecaster,
-                                              TrendExtractor,
-                                              PredictionConfidence,
-                                              QuantumTimeSeriesForecasting)
+from quantum_time_series_forecasting import (TimeSeriesPoint, QuantumStateEncoder,
+                                             VariationalForecaster,
+                                             QuantumFourierTransform,
+                                             TrendAnalyzer,
+                                             QuantumTimeSeriesForecasting)
 
 
-class TestQuantumRecurrentCell(unittest.TestCase):
-    """Test recurrent cell."""
+class TestQuantumStateEncoder(unittest.TestCase):
+    """Test encoder."""
     
     def setUp(self):
-        self.cell = QuantumRecurrentCell(4)
+        self.enc = QuantumStateEncoder(4)
     
-    def test_step(self):
-        """Should step."""
-        s = self.cell.step(1.0)
+    def test_encode(self):
+        """Should encode."""
+        v = [1.0, 0.5, 0.25, 0.125]
+        a = self.enc.encode(v)
+        self.assertEqual(len(a), 16)
+        print("  [PASS] Enc")
+    
+    def test_decode(self):
+        """Should decode."""
+        a = [complex(1.0, 0.0), complex(0.5, 0.0)]
+        v = self.enc.decode(a)
+        self.assertEqual(len(v), 2)
+        print(f"  [PASS] Dec: {v}")
+
+
+class TestVariationalForecaster(unittest.TestCase):
+    """Test forecaster."""
+    
+    def setUp(self):
+        self.vf = VariationalForecaster(4)
+    
+    def test_forecast(self):
+        """Should forecast."""
+        a = [complex(1.0, 0.0), complex(2.0, 0.0), complex(3.0, 0.0)]
+        f = self.vf.forecast(a, 3)
+        self.assertEqual(len(f), 3)
+        print(f"  [PASS] Fcst: {f}")
+
+
+class TestQuantumFourierTransform(unittest.TestCase):
+    """Test QFT."""
+    
+    def setUp(self):
+        self.qft = QuantumFourierTransform()
+    
+    def test_transform(self):
+        """Should transform."""
+        v = [1.0, 0.0, 0.0, 0.0]
+        s = self.qft.transform(v)
         self.assertEqual(len(s), 4)
-        print(f"  [PASS] Step: {s}")
+        print(f"  [PASS] QFT: {len(s)} bins")
     
-    def test_output(self):
-        """Should output."""
-        self.cell.step(1.0)
-        o = self.cell.output()
-        self.assertIsNotNone(o)
-        print(f"  [PASS] Out: {o:.4f}")
+    def test_dominant(self):
+        """Should find dominant."""
+        s = [complex(2.0, 0.0), complex(0.5, 0.0)]
+        idx, mag = self.qft.dominant_frequency(s)
+        self.assertEqual(idx, 0)
+        print(f"  [PASS] Dom: idx={idx}, mag={mag}")
 
 
-class TestQuantumFourierForecaster(unittest.TestCase):
-    """Test Fourier forecaster."""
-    
-    def setUp(self):
-        self.ff = QuantumFourierForecaster(4)
-    
-    def test_dft(self):
-        """Should compute DFT."""
-        series = [1.0, 0.0, -1.0, 0.0]
-        spec = self.ff.dft(series)
-        self.assertEqual(len(spec), 4)
-        print("  [PASS] DFT")
-    
-    def test_predict(self):
-        """Should predict."""
-        series = [1.0, 2.0, 3.0, 2.0, 1.0]
-        p = self.ff.predict(series, 2)
-        self.assertEqual(len(p), 2)
-        print(f"  [PASS] Pred: {p}")
-
-
-class TestTrendExtractor(unittest.TestCase):
+class TestTrendAnalyzer(unittest.TestCase):
     """Test trend."""
     
     def setUp(self):
-        self.te = TrendExtractor()
+        self.ta = TrendAnalyzer()
     
     def test_linear(self):
-        """Should fit linear trend."""
-        series = [0.0, 1.0, 2.0, 3.0, 4.0]
-        slope, intercept = self.te.linear_trend(series)
+        """Should compute linear trend."""
+        pts = [TimeSeriesPoint(0.0, 0.0), TimeSeriesPoint(1.0, 1.0), TimeSeriesPoint(2.0, 2.0)]
+        slope, intercept = self.ta.linear_trend(pts)
         self.assertAlmostEqual(slope, 1.0, places=5)
-        print(f"  [PASS] Trend: {slope:.4f}x + {intercept:.4f}")
+        print(f"  [PASS] Trend: m={slope:.4f}, b={intercept:.4f}")
     
-    def test_detrend(self):
-        """Should detrend."""
-        series = [0.0, 1.0, 2.0, 3.0, 4.0]
-        d = self.te.detrend(series)
-        self.assertAlmostEqual(sum(d), 0.0, places=5)
-        print(f"  [PASS] Detrend: sum={sum(d):.4f}")
-
-
-class TestPredictionConfidence(unittest.TestCase):
-    """Test confidence."""
-    
-    def setUp(self):
-        self.pc = PredictionConfidence()
-    
-    def test_interval(self):
-        """Should compute intervals."""
-        intervals = self.pc.interval([1.0, 2.0], [0.1, 0.2, 0.1])
-        self.assertEqual(len(intervals), 2)
-        self.assertLess(intervals[0][0], intervals[0][1])
-        print(f"  [PASS] CI: {intervals}")
+    def test_seasonality(self):
+        """Should extract seasonality."""
+        pts = [TimeSeriesPoint(0.0, 1.0), TimeSeriesPoint(1.0, 2.0), TimeSeriesPoint(2.0, 1.0)]
+        s = self.ta.seasonality(pts, 2.0)
+        self.assertGreater(len(s), 0)
+        print(f"  [PASS] Seas: {s}")
 
 
 class TestQuantumTimeSeriesForecasting(unittest.TestCase):
     """Test unified controller."""
     
     def setUp(self):
-        self.qtsf = QuantumTimeSeriesForecasting()
+        self.qtsf = QuantumTimeSeriesForecasting(4)
     
     def test_add(self):
-        """Should add history."""
-        self.qtsf.add_history(1.0)
-        self.qtsf.add_history(2.0)
-        self.assertEqual(len(self.qtsf.history), 2)
+        """Should add point."""
+        self.qtsf.add_point(TimeSeriesPoint(0.0, 1.0))
+        self.assertEqual(len(self.qtsf.history), 1)
         print("  [PASS] Add")
     
-    def test_recurrent(self):
-        """Should forecast recurrent."""
-        for v in [1.0, 2.0, 3.0, 2.0, 1.0]:
-            self.qtsf.add_history(v)
-        p = self.qtsf.forecast_recurrent(2)
-        self.assertEqual(len(p), 2)
-        print(f"  [PASS] Rec: {p}")
+    def test_forecast(self):
+        """Should forecast."""
+        for i in range(5):
+            self.qtsf.add_point(TimeSeriesPoint(float(i), float(i)))
+        f = self.qtsf.forecast(3)
+        self.assertEqual(len(f), 3)
+        print(f"  [PASS] Fcst: {f}")
     
-    def test_fourier(self):
-        """Should forecast Fourier."""
-        for v in [1.0, 2.0, 3.0, 2.0, 1.0]:
-            self.qtsf.add_history(v)
-        p = self.qtsf.forecast_fourier(2)
-        self.assertEqual(len(p), 2)
-        print(f"  [PASS] Fou: {p}")
-    
-    def test_combined(self):
-        """Should forecast combined."""
-        for v in [1.0, 2.0, 3.0, 2.0, 1.0]:
-            self.qtsf.add_history(v)
-        p = self.qtsf.forecast_combined(2)
-        self.assertEqual(len(p), 2)
-        print(f"  [PASS] Comb: {p}")
+    def test_freq(self):
+        """Should analyze frequency."""
+        for i in range(8):
+            self.qtsf.add_point(TimeSeriesPoint(float(i), math.sin(i)))
+        r = self.qtsf.analyze_frequency()
+        self.assertIn("dominant_freq_idx", r)
+        print(f"  [PASS] Freq: {r}")
     
     def test_summary(self):
         """Should summarize."""
