@@ -1,171 +1,42 @@
 """
 Power Distribution Module
-Load balancing, bus regulation, and battery management
-for spacecraft electrical power systems.
+Bus regulation, load balancing, battery charge control,
+and solar array tracking for autonomous system power management.
 """
 
 import math
 from typing import Dict, List, Tuple, Optional
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from enum import Enum
+
+
+class PowerSource(Enum):
+    """Power source type."""
+    SOLAR = "solar"
+    BATTERY = "battery"
+    FUEL_CELL = "fuel_cell"
+    RTG = "rtg"
+    EXTERNAL = "external"
+
+
+class BatteryState(Enum):
+    """Battery charge state."""
+    IDLE = "idle"
+    CHARGING = "charging"
+    DISCHARGING = "discharging"
+    FULL = "full"
+    EMPTY = "empty"
+    FAULT = "fault"
 
 
 @dataclass
 class PowerLoad:
-    """An electrical power load."""
-    name: str
-    nominal_power: float  # W
-    priority: int = 5  # 1=highest, 10=lowest
-    is_enabled: bool = True
-    duty_cycle: float = 1.0  # 0-1
-    
-    def current_power(self) -> float:
-        """Get current power draw."""
-        if not self.is_enabled:
-            return 0.0
-        return self.nominal_power * self.duty_cycle
-
-
-@dataclass
-class Battery:
-    """A spacecraft battery."""
-    name: str
-    capacity: float  # Wh
-    voltage: float  # V
-    charge_efficiency: float = 0.95
-    discharge_efficiency: float = 0.95
-    max_charge_rate: float = 100.0  # W
-    max_discharge_rate: float = 200.0  # W
-    state_of_charge: float = 1.0  # 0-1
-    cycle_count: int = 0
-    
-    def available_energy(self) -> float:
-        """Get available energy (Wh)."""
-        return self.capacity * self.state_of_charge * self.discharge_efficiency
-    
-    def charge(self, power: float, dt: float) -> float:
-        """
-        Charge battery.
-        
-        Args:
-            power: Charging power (W)
-            dt: Time (hours)
-        
-        Returns:
-            Actual energy stored (Wh)
-        """
-        power = min(power, self.max_charge_rate)
-        energy_in = power * dt * self.charge_efficiency
-        
-        needed = self.capacity * (1.0 - self.state_of_charge)
-        stored = min(energy_in, needed)
-        
-        self.state_of_charge += stored / self.capacity
-        self.state_of_charge = min(1.0, self.state_of_charge)
-        
-        return stored
-    
-    def discharge(self, power: float, dt: float) -> float:
-        """
-        Discharge battery.
-        
-        Args:
-            power: Discharging power (W)
-            dt: Time (hours)
-        
-        Returns:
-            Actual energy delivered (Wh)
-        """
-        power = min(power, self.max_discharge_rate)
-        energy_out = power * dt / self.discharge_efficiency
-        
-        available = self.capacity * self.state_of_charge
-        delivered = min(energy_out, available)
-        
-        self.state_of_charge -= delivered / self.capacity
-        self.state_of_charge = max(0.0, self.state_of_charge)
-        
-        if delivered > 0:
-            self.cycle_count += 1
-        
-        return delivered * self.discharge_efficiency
-    
-    def depth_of_discharge(self) -> float:
-        """Get depth of discharge."""
-        return 1.0 - self.state_of_charge
-
-
-@dataclass
-class SolarArray:
-    """A solar array power source."""
-    name: str
-    area: float  # m^2
-    efficiency: float  # 0-1
-    solar_constant: float = 1361.0  # W/m^2 at 1 AU
-    
-    def output_power(self, sun_angle: float = 0.0,
-                    distance_au: float = 1.0) -> float:
-        """
-        Compute output power.
-        
-        Args:
-            sun_angle: Angle from sun (radians), 0 = direct
-            distance_au: Distance from sun (AU)
-        
-        Returns:
-            Output power (W)
-        """
-        flux = self.solar_constant / (distance_au ** 2)
-        return self.area * self.efficiency * flux * math.cos(sun_angle)
-
-
-class LoadBalancer:
-    """
-    Balance power loads across available sources.
-    """
-    
-    def __init__(self):
-        self.loads: Dict[str, PowerLoad] = {}
-        self.available_power: float = 0.0
-    
-    def add_load(self, load: PowerLoad):
-        """Add power load."""
-        self.loads[load.name] = load
-    
-    def set_available_power(self, power: float):
-        """Set available power."""
-        self.available_power = power
-    
-    def total_demand(self) -> float:
-        """Get total power demand."""
-        return sum(load.current_power() for load in self.loads.values())
-    
-    def balance(self) -> Dict[str, bool]:
-        """
-        Balance loads based on priority.
-        
-        Returns:
-            Load enable states
-        """
-        # Sort by priority
-        sorted_loads = sorted(self.loads.values(), key=lambda l: l.priority)
-        
-        remaining = self.available_power
-        states = {}
-        
-        for load in sorted_loads:
-            demand = load.nominal_power * load.duty_cycle
-            if demand <= remaining:
-                load.is_enabled = True
-                remaining -= demand
-            else:
-                load.is_enabled = False
-            states[load.name] = load.is_enabled
-        
-        return states
-    
-    def get_shed_loads(self) -> List[str]:
-        """Get list of shed (disabled) loads."""
-        return [name for name, load in self.loads.items() if not load.is_enabled]
+    """Electrical power load."""
+    load_id: str
+    power_W: float
+    voltage_V: float
+    priority: int = 1  # Lower = higher priority
+    enabled: bool = True
 
 
 class BusRegulator:
@@ -173,47 +44,356 @@ class BusRegulator:
     Power bus voltage regulator.
     """
     
-    def __init__(self, nominal_voltage: float = 28.0,
-                 tolerance: float = 0.05):
+    def __init__(self, nominal_voltage_V: float = 28.0,
+                 tolerance_percent: float = 5.0,
+                 max_current_A: float = 100.0):
         """
         Args:
-            nominal_voltage: Nominal bus voltage (V)
-            tolerance: Voltage tolerance fraction
+            nominal_voltage_V: Nominal bus voltage
+            tolerance_percent: Voltage tolerance
+            max_current_A: Maximum current capacity
         """
-        self.nominal_voltage = nominal_voltage
-        self.tolerance = tolerance
-        self.current_voltage = nominal_voltage
-        self.current_load = 0.0
+        self.nominal_voltage = nominal_voltage_V
+        self.tolerance = tolerance_percent / 100.0
+        self.max_current = max_current_A
+        self.output_voltage = nominal_voltage_V
+        self.current_load_A = 0.0
     
-    def regulate(self, source_power: float, load_power: float) -> float:
+    def set_voltage(self, voltage_V: float) -> bool:
         """
-        Regulate bus voltage.
+        Set output voltage.
         
         Args:
-            source_power: Available source power (W)
-            load_power: Total load power (W)
+            voltage_V: Target voltage
         
         Returns:
-            Regulated voltage
+            True if within tolerance
         """
-        self.current_load = load_power
+        min_v = self.nominal_voltage * (1 - self.tolerance)
+        max_v = self.nominal_voltage * (1 + self.tolerance)
         
-        if source_power >= load_power:
-            # Sufficient power
-            sag = 0.0
-        else:
-            # Insufficient power - voltage sags
-            sag_ratio = 1.0 - (source_power / load_power) if load_power > 0 else 0
-            sag = sag_ratio * self.tolerance * self.nominal_voltage
-        
-        self.current_voltage = self.nominal_voltage - sag
-        return self.current_voltage
+        if min_v <= voltage_V <= max_v:
+            self.output_voltage = voltage_V
+            return True
+        return False
     
-    def is_within_tolerance(self) -> bool:
-        """Check if voltage is within tolerance."""
-        lower = self.nominal_voltage * (1 - self.tolerance)
-        upper = self.nominal_voltage * (1 + self.tolerance)
-        return lower <= self.current_voltage <= upper
+    def current_draw(self, power_W: float) -> float:
+        """
+        Compute current for power at current voltage.
+        
+        Args:
+            power_W: Power draw
+        
+        Returns:
+            Current (A)
+        """
+        if self.output_voltage <= 0:
+            return 0.0
+        return power_W / self.output_voltage
+    
+    def available_power(self) -> float:
+        """
+        Compute available power.
+        
+        Returns:
+            Available power (W)
+        """
+        available_current = self.max_current - self.current_load_A
+        return available_current * self.output_voltage
+    
+    def is_overloaded(self) -> bool:
+        """Check if bus is overloaded."""
+        return self.current_load_A > self.max_current
+    
+    def add_load(self, current_A: float):
+        """Add current load."""
+        self.current_load_A += current_A
+    
+    def remove_load(self, current_A: float):
+        """Remove current load."""
+        self.current_load_A = max(0.0, self.current_load_A - current_A)
+
+
+class LoadBalancer:
+    """
+    Distribute power across multiple sources.
+    """
+    
+    def __init__(self):
+        self.sources: Dict[PowerSource, float] = {}
+        # source -> available power (W)
+        self.loads: List[PowerLoad] = []
+    
+    def register_source(self, source: PowerSource, capacity_W: float):
+        """Register power source."""
+        self.sources[source] = capacity_W
+    
+    def add_load(self, load: PowerLoad):
+        """Add power load."""
+        self.loads.append(load)
+    
+    def total_demand(self) -> float:
+        """Get total power demand."""
+        return sum(l.power_W for l in self.loads if l.enabled)
+    
+    def total_capacity(self) -> float:
+        """Get total source capacity."""
+        return sum(self.sources.values())
+    
+    def power_margin(self) -> float:
+        """Get power margin (positive = surplus)."""
+        return self.total_capacity() - self.total_demand()
+    
+    def is_sustainable(self) -> bool:
+        """Check if demand can be met."""
+        return self.power_margin() >= 0
+    
+    def shed_low_priority(self, target_reduction_W: float) -> List[str]:
+        """
+        Shed low priority loads.
+        
+        Args:
+            target_reduction_W: Target power reduction
+        
+        Returns:
+            List of shed load IDs
+        """
+        # Sort by priority (higher number = lower priority)
+        sorted_loads = sorted(self.loads, key=lambda l: -l.priority)
+        
+        shed = []
+        reduction = 0.0
+        
+        for load in sorted_loads:
+            if not load.enabled:
+                continue
+            if reduction >= target_reduction_W:
+                break
+            
+            load.enabled = False
+            reduction += load.power_W
+            shed.append(load.load_id)
+        
+        return shed
+    
+    def allocation(self) -> Dict[PowerSource, float]:
+        """
+        Allocate power from sources.
+        
+        Returns:
+            Source allocation (W)
+        """
+        if not self.is_sustainable():
+            # Return proportional allocation
+            total = self.total_capacity()
+            if total <= 0:
+                return {s: 0.0 for s in self.sources}
+            ratio = total / self.total_demand()
+            return {s: cap * ratio for s, cap in self.sources.items()}
+        
+        # Full allocation
+        return dict(self.sources)
+
+
+class BatteryController:
+    """
+    Battery charge and discharge control.
+    """
+    
+    def __init__(self, capacity_Ah: float = 100.0,
+                 nominal_voltage_V: float = 28.0,
+                 max_charge_rate_C: float = 0.5,
+                 max_discharge_rate_C: float = 1.0,
+                 efficiency: float = 0.95):
+        """
+        Args:
+            capacity_Ah: Battery capacity
+            nominal_voltage_V: Nominal voltage
+            max_charge_rate_C: Max charge rate (C-rate)
+            max_discharge_rate_C: Max discharge rate
+            efficiency: Round-trip efficiency
+        """
+        self.capacity_Ah = capacity_Ah
+        self.nominal_voltage = nominal_voltage_V
+        self.max_charge_rate = max_charge_rate_C
+        self.max_discharge_rate = max_discharge_rate_C
+        self.efficiency = efficiency
+        self.state_of_charge = 0.5  # Start at 50%
+        self.state = BatteryState.IDLE
+        self.cycle_count = 0
+    
+    def charge(self, power_W: float, duration_h: float) -> float:
+        """
+        Charge battery.
+        
+        Args:
+            power_W: Charge power
+            duration_h: Duration
+        
+        Returns:
+            Energy added (Wh)
+        """
+        max_charge_A = self.capacity_Ah * self.max_charge_rate
+        charge_power_max = max_charge_A * self.nominal_voltage
+        
+        actual_power = min(power_W, charge_power_max)
+        energy_Wh = actual_power * duration_h * self.efficiency
+        
+        # Update SOC
+        capacity_Wh = self.capacity_Ah * self.nominal_voltage
+        soc_increase = energy_Wh / capacity_Wh
+        self.state_of_charge = min(1.0, self.state_of_charge + soc_increase)
+        
+        if self.state_of_charge >= 0.99:
+            self.state = BatteryState.FULL
+        else:
+            self.state = BatteryState.CHARGING
+        
+        return energy_Wh
+    
+    def discharge(self, power_W: float, duration_h: float) -> float:
+        """
+        Discharge battery.
+        
+        Args:
+            power_W: Discharge power
+            duration_h: Duration
+        
+        Returns:
+            Energy delivered (Wh)
+        """
+        max_discharge_A = self.capacity_Ah * self.max_discharge_rate
+        discharge_power_max = max_discharge_A * self.nominal_voltage
+        
+        actual_power = min(power_W, discharge_power_max)
+        energy_Wh = actual_power * duration_h
+        
+        # Update SOC
+        capacity_Wh = self.capacity_Ah * self.nominal_voltage
+        soc_decrease = energy_Wh / (capacity_Wh * self.efficiency)
+        self.state_of_charge = max(0.0, self.state_of_charge - soc_decrease)
+        
+        if self.state_of_charge <= 0.01:
+            self.state = BatteryState.EMPTY
+        else:
+            self.state = BatteryState.DISCHARGING
+        
+        return energy_Wh
+    
+    def remaining_energy_Wh(self) -> float:
+        """Get remaining energy."""
+        return self.state_of_charge * self.capacity_Ah * self.nominal_voltage
+    
+    def remaining_time_h(self, discharge_power_W: float) -> float:
+        """
+        Estimate remaining time at discharge rate.
+        
+        Args:
+            discharge_power_W: Discharge power
+        
+        Returns:
+            Remaining time (hours)
+        """
+        if discharge_power_W <= 0:
+            return float('inf')
+        
+        remaining_Wh = self.remaining_energy_Wh()
+        return remaining_Wh / discharge_power_W
+    
+    def health_percent(self) -> float:
+        """Get battery health estimate."""
+        # Degrade with cycles
+        degradation = min(0.3, self.cycle_count * 0.001)
+        return (1.0 - degradation) * 100.0
+
+
+class SolarArrayTracker:
+    """
+    Solar array sun tracking and power generation.
+    """
+    
+    def __init__(self, area_m2: float = 20.0,
+                 efficiency: float = 0.28,
+                 max_power_W_m2: float = 1361.0):
+        """
+        Args:
+            area_m2: Total array area
+            efficiency: Cell efficiency
+            max_power_W_m2: Solar constant
+        """
+        self.area = area_m2
+        self.efficiency = efficiency
+        self.solar_constant = max_power_W_m2
+        self.azimuth_deg = 0.0
+        self.elevation_deg = 90.0
+        self.tracking_active = False
+    
+    def set_orientation(self, azimuth_deg: float, elevation_deg: float):
+        """
+        Set array orientation.
+        
+        Args:
+            azimuth_deg: Azimuth angle
+            elevation_deg: Elevation angle
+        """
+        self.azimuth_deg = azimuth_deg
+        self.elevation_deg = max(0.0, min(90.0, elevation_deg))
+    
+    def cosine_loss(self, sun_azimuth_deg: float,
+                   sun_elevation_deg: float) -> float:
+        """
+        Compute cosine loss relative to sun.
+        
+        Args:
+            sun_azimuth_deg: Sun azimuth
+            sun_elevation_deg: Sun elevation
+        
+        Returns:
+            Cosine factor (0-1)
+        """
+        # Simplified: based on elevation difference
+        d_elev = math.radians(sun_elevation_deg - self.elevation_deg)
+        d_azim = math.radians(sun_azimuth_deg - self.azimuth_deg)
+        
+        # Approximate cosine loss
+        cos_elev = math.cos(d_elev)
+        cos_azim = math.cos(d_azim)
+        
+        return max(0.0, cos_elev * cos_azim)
+    
+    def generated_power(self, sun_azimuth_deg: float = 0.0,
+                       sun_elevation_deg: float = 90.0,
+                       illumination_factor: float = 1.0) -> float:
+        """
+        Compute generated power.
+        
+        Args:
+            sun_azimuth_deg: Sun azimuth
+            sun_elevation_deg: Sun elevation
+            illumination_factor: Illumination (0-1, eclipse=0)
+        
+        Returns:
+            Generated power (W)
+        """
+        if self.tracking_active:
+            # Auto-track: assume perfect alignment
+            cosine = 1.0
+        else:
+            cosine = self.cosine_loss(sun_azimuth_deg, sun_elevation_deg)
+        
+        return self.area * self.efficiency * self.solar_constant * cosine * illumination_factor
+    
+    def track_sun(self, sun_azimuth_deg: float, sun_elevation_deg: float):
+        """
+        Point array at sun.
+        
+        Args:
+            sun_azimuth_deg: Sun azimuth
+            sun_elevation_deg: Sun elevation
+        """
+        self.tracking_active = True
+        self.azimuth_deg = sun_azimuth_deg
+        self.elevation_deg = sun_elevation_deg
 
 
 class PowerDistribution:
@@ -222,100 +402,48 @@ class PowerDistribution:
     """
     
     def __init__(self):
-        self.batteries: Dict[str, Battery] = {}
-        self.solar_arrays: Dict[str, SolarArray] = {}
-        self.load_balancer = LoadBalancer()
-        self.bus_regulator = BusRegulator()
-        self.total_generated: float = 0.0
-        self.total_consumed: float = 0.0
+        self.bus = BusRegulator()
+        self.balancer = LoadBalancer()
+        self.battery = BatteryController()
+        self.solar = SolarArrayTracker()
     
-    def add_battery(self, battery: Battery):
-        """Add battery."""
-        self.batteries[battery.name] = battery
-    
-    def add_solar_array(self, array: SolarArray):
-        """Add solar array."""
-        self.solar_arrays[array.name] = array
+    def register_source(self, source: PowerSource, capacity_W: float):
+        """Register power source."""
+        self.balancer.register_source(source, capacity_W)
     
     def add_load(self, load: PowerLoad):
-        """Add power load."""
-        self.load_balancer.add_load(load)
+        """Add electrical load."""
+        self.balancer.add_load(load)
+        current = self.bus.current_draw(load.power_W)
+        self.bus.add_load(current)
     
-    def compute_generation(self, sun_angle: float = 0.0,
-                          distance_au: float = 1.0) -> float:
-        """
-        Compute total generation.
-        
-        Args:
-            sun_angle: Sun angle
-            distance_au: Distance from sun
-        
-        Returns:
-            Total power generated (W)
-        """
-        total = 0.0
-        for array in self.solar_arrays.values():
-            total += array.output_power(sun_angle, distance_au)
-        self.total_generated = total
-        return total
+    def remove_load(self, load_id: str):
+        """Remove electrical load."""
+        for load in self.balancer.loads:
+            if load.load_id == load_id and load.enabled:
+                current = self.bus.current_draw(load.power_W)
+                self.bus.remove_load(current)
+                load.enabled = False
+                break
     
-    def distribute(self, dt_hours: float = 1.0) -> Dict:
-        """
-        Distribute power for one time step.
-        
-        Args:
-            dt_hours: Time step (hours)
-        
-        Returns:
-            Distribution status
-        """
-        generation = self.total_generated
-        demand = self.load_balancer.total_demand()
-        
-        # Regulate bus
-        voltage = self.bus_regulator.regulate(generation, demand)
-        
-        # Balance loads
-        self.load_balancer.set_available_power(generation)
-        states = self.load_balancer.balance()
-        
-        # Use battery if needed
-        battery_support = 0.0
-        if generation < demand:
-            deficit = demand - generation
-            for battery in self.batteries.values():
-                power = min(deficit, battery.max_discharge_rate)
-                delivered = battery.discharge(power, dt_hours)
-                battery_support += delivered / dt_hours if dt_hours > 0 else 0
-                deficit -= power
-                if deficit <= 0:
-                    break
-        elif generation > demand:
-            surplus = generation - demand
-            for battery in self.batteries.values():
-                power = min(surplus, battery.max_charge_rate)
-                stored = battery.charge(power, dt_hours)
-                surplus -= power
-                if surplus <= 0:
-                    break
-        
-        self.total_consumed = min(generation + battery_support, demand)
-        
-        return {
-            "generation": generation,
-            "demand": demand,
-            "battery_support": battery_support,
-            "voltage": voltage,
-            "load_states": states,
-            "shed_loads": self.load_balancer.get_shed_loads()
-        }
+    def charge_battery(self, power_W: float, duration_h: float) -> float:
+        """Charge battery."""
+        return self.battery.charge(power_W, duration_h)
+    
+    def discharge_battery(self, power_W: float, duration_h: float) -> float:
+        """Discharge battery."""
+        return self.battery.discharge(power_W, duration_h)
     
     def power_summary(self) -> Dict:
-        """Get power summary."""
+        """Get power distribution summary."""
         return {
-            "generation": self.total_generated,
-            "consumption": self.total_consumed,
-            "battery_soc": {name: b.state_of_charge for name, b in self.batteries.items()},
-            "bus_voltage": self.bus_regulator.current_voltage,
-            "loads": len(self.load_balancer.loads)
+            "bus_voltage_V": self.bus.output_voltage,
+            "bus_current_A": self.bus.current_load_A,
+            "total_demand_W": self.balancer.total_demand(),
+            "total_capacity_W": self.balancer.total_capacity(),
+            "power_margin_W": self.balancer.power_margin(),
+            "battery_soc": self.battery.state_of_charge,
+            "battery_state": self.battery.state.value,
+            "solar_power_W": self.solar.generated_power(),
+            "bus_overloaded": self.bus.is_overloaded()
         }

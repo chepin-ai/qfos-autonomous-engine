@@ -8,78 +8,48 @@ import os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from power_distribution import (PowerLoad, Battery, SolarArray,
-                                LoadBalancer, BusRegulator,
+from power_distribution import (PowerSource, BatteryState, PowerLoad,
+                                BusRegulator, LoadBalancer,
+                                BatteryController, SolarArrayTracker,
                                 PowerDistribution)
 
 
-class TestPowerLoad(unittest.TestCase):
-    """Test power load."""
-    
-    def test_current_power(self):
-        """Should compute current power."""
-        load = PowerLoad("comms", 50.0, duty_cycle=0.5)
-        self.assertEqual(load.current_power(), 25.0)
-        print("  [PASS] Power: 25.0 W")
-    
-    def test_disabled(self):
-        """Should be zero when disabled."""
-        load = PowerLoad("heater", 100.0, is_enabled=False)
-        self.assertEqual(load.current_power(), 0.0)
-        print("  [PASS] Disabled: 0 W")
-
-
-class TestBattery(unittest.TestCase):
-    """Test battery."""
+class TestBusRegulator(unittest.TestCase):
+    """Test bus regulator."""
     
     def setUp(self):
-        self.bat = Battery("main", capacity=1000.0, voltage=28.0,
-                          state_of_charge=0.8)
+        self.bus = BusRegulator(nominal_voltage_V=28.0, max_current_A=100.0)
     
-    def test_available_energy(self):
-        """Should compute available energy."""
-        avail = self.bat.available_energy()
-        self.assertEqual(avail, 760.0)  # 1000 * 0.8 * 0.95
-        print(f"  [PASS] Available: {avail:.0f} Wh")
+    def test_set_voltage(self):
+        """Should set voltage within tolerance."""
+        ok = self.bus.set_voltage(28.5)
+        self.assertTrue(ok)
+        self.assertEqual(self.bus.output_voltage, 28.5)
+        print("  [PASS] Set: 28.5V")
     
-    def test_charge(self):
-        """Should charge."""
-        stored = self.bat.charge(power=50.0, dt=1.0)
-        self.assertGreater(stored, 0)
-        self.assertGreater(self.bat.state_of_charge, 0.8)
-        print(f"  [PASS] Charge: SOC={self.bat.state_of_charge:.3f}")
+    def test_set_voltage_out_of_range(self):
+        """Should reject out-of-range voltage."""
+        ok = self.bus.set_voltage(35.0)
+        self.assertFalse(ok)
+        print("  [PASS] Reject: 35V")
     
-    def test_discharge(self):
-        """Should discharge."""
-        delivered = self.bat.discharge(power=50.0, dt=1.0)
-        self.assertGreater(delivered, 0)
-        self.assertLess(self.bat.state_of_charge, 0.8)
-        print(f"  [PASS] Discharge: SOC={self.bat.state_of_charge:.3f}")
+    def test_current_draw(self):
+        """Should compute current."""
+        i = self.bus.current_draw(280.0)
+        self.assertEqual(i, 10.0)
+        print(f"  [PASS] Current: {i} A")
     
-    def test_dod(self):
-        """Should compute depth of discharge."""
-        dod = self.bat.depth_of_discharge()
-        self.assertAlmostEqual(dod, 0.2, places=5)
-        print(f"  [PASS] DoD: {dod:.1f}")
-
-
-class TestSolarArray(unittest.TestCase):
-    """Test solar array."""
+    def test_available_power(self):
+        """Should compute available power."""
+        p = self.bus.available_power()
+        self.assertEqual(p, 2800.0)  # 100A * 28V
+        print(f"  [PASS] Available: {p} W")
     
-    def setUp(self):
-        self.array = SolarArray("SA1", area=5.0, efficiency=0.28)
-    
-    def test_output_power(self):
-        """Should compute output power."""
-        power = self.array.output_power(sun_angle=0.0, distance_au=1.0)
-        self.assertAlmostEqual(power, 1905.4, places=0)
-        print(f"  [PASS] Output: {power:.0f} W")
-    
-    def test_angled(self):
-        """Should reduce at angle."""
-        power = self.array.output_power(sun_angle=1.0)
-        self.assertLess(power, 1905.0)
-        print(f"  [PASS] Angled: {power:.0f} W")
+    def test_overloaded(self):
+        """Should detect overload."""
+        self.bus.add_load(150.0)
+        self.assertTrue(self.bus.is_overloaded())
+        print("  [PASS] Overloaded")
 
 
 class TestLoadBalancer(unittest.TestCase):
@@ -87,55 +57,109 @@ class TestLoadBalancer(unittest.TestCase):
     
     def setUp(self):
         self.lb = LoadBalancer()
-        self.lb.add_load(PowerLoad("comms", 50.0, priority=2))
-        self.lb.add_load(PowerLoad("heater", 200.0, priority=5))
-        self.lb.add_load(PowerLoad("payload", 100.0, priority=1))
+        self.lb.register_source(PowerSource.SOLAR, 1000.0)
+        self.lb.register_source(PowerSource.BATTERY, 500.0)
     
-    def test_total_demand(self):
-        """Should compute total demand."""
-        self.assertEqual(self.lb.total_demand(), 350.0)
-        print("  [PASS] Demand: 350 W")
+    def test_total_capacity(self):
+        """Should compute total capacity."""
+        cap = self.lb.total_capacity()
+        self.assertEqual(cap, 1500.0)
+        print(f"  [PASS] Capacity: {cap}")
     
-    def test_balance(self):
-        """Should balance loads."""
-        self.lb.set_available_power(300.0)
-        states = self.lb.balance()
-        self.assertTrue(states["payload"])  # Priority 1
-        self.assertTrue(states["comms"])    # Priority 2
-        print("  [PASS] Balance: high priority on")
+    def test_sustainable(self):
+        """Should check sustainability."""
+        self.lb.add_load(PowerLoad("L1", 200.0, 28.0))
+        self.assertTrue(self.lb.is_sustainable())
+        print("  [PASS] Sustainable")
     
-    def test_shed(self):
-        """Should shed low priority."""
-        self.lb.set_available_power(100.0)
-        self.lb.balance()
-        shed = self.lb.get_shed_loads()
-        self.assertIn("heater", shed)
+    def test_not_sustainable(self):
+        """Should detect unsustainable."""
+        self.lb.add_load(PowerLoad("L1", 1000.0, 28.0))
+        self.lb.add_load(PowerLoad("L2", 600.0, 28.0))
+        self.assertFalse(self.lb.is_sustainable())
+        print("  [PASS] Not sustainable")
+    
+    def test_shed_load(self):
+        """Should shed low priority loads."""
+        self.lb.add_load(PowerLoad("L1", 200.0, 28.0, priority=1))
+        self.lb.add_load(PowerLoad("L2", 300.0, 28.0, priority=5))
+        shed = self.lb.shed_low_priority(250.0)
+        self.assertIn("L2", shed)
         print(f"  [PASS] Shed: {shed}")
 
 
-class TestBusRegulator(unittest.TestCase):
-    """Test bus regulator."""
+class TestBatteryController(unittest.TestCase):
+    """Test battery controller."""
     
     def setUp(self):
-        self.reg = BusRegulator(nominal_voltage=28.0, tolerance=0.05)
+        self.bc = BatteryController(capacity_Ah=100.0, nominal_voltage_V=28.0)
     
-    def test_regulate_sufficient(self):
-        """Should maintain voltage when sufficient."""
-        v = self.reg.regulate(source_power=500.0, load_power=300.0)
-        self.assertEqual(v, 28.0)
-        print(f"  [PASS] Regulate: {v:.1f} V")
+    def test_initial_soc(self):
+        """Should start at 50% SOC."""
+        self.assertEqual(self.bc.state_of_charge, 0.5)
+        print("  [PASS] SOC: 0.5")
     
-    def test_regulate_insufficient(self):
-        """Should sag when insufficient."""
-        v = self.reg.regulate(source_power=100.0, load_power=500.0)
-        self.assertLess(v, 28.0)
-        print(f"  [PASS] Sag: {v:.1f} V")
+    def test_charge(self):
+        """Should charge battery."""
+        energy = self.bc.charge(500.0, 1.0)
+        self.assertGreater(energy, 0)
+        self.assertGreater(self.bc.state_of_charge, 0.5)
+        print(f"  [PASS] Charge: {energy:.1f} Wh, SOC={self.bc.state_of_charge:.3f}")
     
-    def test_within_tolerance(self):
-        """Should check tolerance."""
-        self.reg.regulate(500.0, 300.0)
-        self.assertTrue(self.reg.is_within_tolerance())
-        print("  [PASS] Tolerance: ok")
+    def test_discharge(self):
+        """Should discharge battery."""
+        self.bc.charge(500.0, 1.0)  # ensure enough charge
+        soc_before = self.bc.state_of_charge
+        energy = self.bc.discharge(200.0, 1.0)
+        self.assertGreater(energy, 0)
+        self.assertLess(self.bc.state_of_charge, soc_before)
+        print(f"  [PASS] Discharge: {energy:.1f} Wh, SOC={self.bc.state_of_charge:.3f}")
+    
+    def test_remaining_energy(self):
+        """Should compute remaining energy."""
+        e = self.bc.remaining_energy_Wh()
+        self.assertEqual(e, 0.5 * 100.0 * 28.0)
+        print(f"  [PASS] Remaining: {e} Wh")
+    
+    def test_remaining_time(self):
+        """Should compute remaining time."""
+        t = self.bc.remaining_time_h(100.0)
+        self.assertGreater(t, 0)
+        print(f"  [PASS] Time: {t:.1f} h")
+
+
+class TestSolarArrayTracker(unittest.TestCase):
+    """Test solar array tracker."""
+    
+    def setUp(self):
+        self.sa = SolarArrayTracker(area_m2=20.0, efficiency=0.28)
+    
+    def test_generated_power(self):
+        """Should compute generated power."""
+        p = self.sa.generated_power(sun_elevation_deg=90.0)
+        self.assertGreater(p, 0)
+        print(f"  [PASS] Power: {p:.1f} W")
+    
+    def test_cosine_loss(self):
+        """Should compute cosine loss."""
+        self.sa.set_orientation(0.0, 45.0)
+        cos = self.sa.cosine_loss(0.0, 90.0)
+        self.assertGreater(cos, 0)
+        self.assertLessEqual(cos, 1.0)
+        print(f"  [PASS] Cosine: {cos:.3f}")
+    
+    def test_track_sun(self):
+        """Should track sun."""
+        self.sa.track_sun(30.0, 60.0)
+        self.assertTrue(self.sa.tracking_active)
+        self.assertEqual(self.sa.azimuth_deg, 30.0)
+        print("  [PASS] Track: 30, 60")
+    
+    def test_eclipse(self):
+        """Should generate zero in eclipse."""
+        p = self.sa.generated_power(illumination_factor=0.0)
+        self.assertEqual(p, 0.0)
+        print("  [PASS] Eclipse: 0")
 
 
 class TestPowerDistribution(unittest.TestCase):
@@ -143,32 +167,29 @@ class TestPowerDistribution(unittest.TestCase):
     
     def setUp(self):
         self.pd = PowerDistribution()
-        self.pd.add_battery(Battery("bat1", 1000.0, 28.0, state_of_charge=0.9))
-        self.pd.add_solar_array(SolarArray("sa1", 5.0, 0.28))
-        self.pd.add_load(PowerLoad("comms", 50.0))
-        self.pd.add_load(PowerLoad("heater", 100.0))
+        self.pd.register_source(PowerSource.SOLAR, 1000.0)
     
-    def test_generation(self):
-        """Should compute generation."""
-        gen = self.pd.compute_generation()
-        self.assertGreater(gen, 0)
-        print(f"  [PASS] Generation: {gen:.0f} W")
+    def test_add_load(self):
+        """Should add load."""
+        self.pd.add_load(PowerLoad("L1", 100.0, 28.0))
+        self.assertEqual(self.pd.balancer.total_demand(), 100.0)
+        print("  [PASS] Add: 100W")
     
-    def test_distribute(self):
-        """Should distribute power."""
-        self.pd.compute_generation()
-        status = self.pd.distribute(dt_hours=1.0)
-        self.assertIn("generation", status)
-        self.assertIn("demand", status)
-        print(f"  [PASS] Distribute: gen={status['generation']:.0f}W")
+    def test_remove_load(self):
+        """Should remove load."""
+        self.pd.add_load(PowerLoad("L1", 100.0, 28.0))
+        self.pd.remove_load("L1")
+        # Load disabled, demand may still show if not filtered
+        enabled_demand = sum(l.power_W for l in self.pd.balancer.loads if l.enabled)
+        self.assertEqual(enabled_demand, 0.0)
+        print("  [PASS] Remove: 0W")
     
     def test_summary(self):
         """Should provide summary."""
-        self.pd.compute_generation()
-        self.pd.distribute()
         summary = self.pd.power_summary()
+        self.assertIn("bus_voltage_V", summary)
         self.assertIn("battery_soc", summary)
-        print(f"  [PASS] Summary: SOC={summary['battery_soc']}")
+        print(f"  [PASS] Summary: bus={summary['bus_voltage_V']}V")
 
 
 if __name__ == '__main__':

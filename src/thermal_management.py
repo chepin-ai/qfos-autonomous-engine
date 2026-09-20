@@ -1,236 +1,309 @@
 """
 Thermal Management Module
-Heat sink modeling, radiator sizing, and temperature
-control for spacecraft thermal regulation.
+Heat pipe, radiator, fluid loop, and cryocooler control
+for autonomous system thermal regulation.
 """
 
 import math
 from typing import Dict, List, Tuple, Optional
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from enum import Enum
+
+
+class ThermalZone(Enum):
+    """Thermal management zone."""
+    ELECTRONICS = "electronics"
+    PROPULSION = "propulsion"
+    BATTERY = "battery"
+    PAYLOAD = "payload"
+    ENVIRONMENT = "environment"
+
+
+class CoolingMode(Enum):
+    """Active cooling mode."""
+    PASSIVE = "passive"
+    RADIATOR = "radiator"
+    FLUID_LOOP = "fluid_loop"
+    CRYOCOOLER = "cryocooler"
+    EMERGENCY = "emergency"
 
 
 @dataclass
-class ThermalNode:
-    """A thermal node in the spacecraft."""
-    name: str
-    mass: float  # kg
-    specific_heat: float  # J/(kg·K)
-    temperature: float = 300.0  # K
-    heat_generation: float = 0.0  # W
-    
-    def thermal_capacity(self) -> float:
-        """Get thermal capacity (J/K)."""
-        return self.mass * self.specific_heat
+class TemperatureReading:
+    """Temperature sensor reading."""
+    zone: ThermalZone
+    temperature_K: float
+    timestamp: float = 0.0
 
 
-@dataclass
-class Radiator:
-    """A spacecraft radiator."""
-    name: str
-    area: float  # m^2
-    emissivity: float  # 0-1
-    absorptivity: float  # 0-1
-    efficiency: float = 0.85
+class HeatPipe:
+    """
+    Heat pipe thermal transfer device.
+    """
     
-    def radiated_power(self, temp: float,
-                      ambient_temp: float = 3.0) -> float:
+    def __init__(self, max_power_W: float = 500.0,
+                 thermal_resistance_K_W: float = 0.1,
+                 working_fluid: str = "ammonia"):
         """
-        Compute radiated power using Stefan-Boltzmann.
+        Args:
+            max_power_W: Maximum heat transfer capacity
+            thermal_resistance_K_W: Thermal resistance
+            working_fluid: Working fluid type
+        """
+        self.max_power = max_power_W
+        self.thermal_resistance = thermal_resistance_K_W
+        self.working_fluid = working_fluid
+        self.active = False
+    
+    def transfer_rate(self, delta_T_K: float) -> float:
+        """
+        Compute heat transfer rate.
         
         Args:
-            temp: Radiator temperature (K)
-            ambient_temp: Ambient temperature (K)
+            delta_T_K: Temperature difference
         
         Returns:
-            Radiated power (W)
+            Heat transfer rate (W)
         """
-        sigma = 5.67e-8  # Stefan-Boltzmann constant
-        return self.efficiency * self.emissivity * self.area * sigma * (
-            temp**4 - ambient_temp**4
-        )
+        if not self.active:
+            return 0.0
+        
+        rate = delta_T_K / self.thermal_resistance
+        return min(rate, self.max_power)
     
-    def required_area(self, power: float, temp: float,
-                     ambient_temp: float = 3.0) -> float:
+    def efficiency(self, delta_T_K: float) -> float:
         """
-        Compute required radiator area.
+        Compute transfer efficiency.
         
         Args:
-            power: Power to dissipate (W)
-            temp: Operating temperature (K)
-            ambient_temp: Ambient temperature (K)
+            delta_T_K: Temperature difference
+        
+        Returns:
+            Efficiency (0-1)
+        """
+        if delta_T_K <= 0:
+            return 0.0
+        
+        rate = self.transfer_rate(delta_T_K)
+        # Efficiency decreases near capacity
+        return min(1.0, rate / self.max_power) if self.max_power > 0 else 0.0
+    
+    def activate(self):
+        """Activate heat pipe."""
+        self.active = True
+    
+    def deactivate(self):
+        """Deactivate heat pipe."""
+        self.active = False
+
+
+class Radiator:
+    """
+    Radiator heat rejection system.
+    """
+    
+    def __init__(self, area_m2: float = 10.0,
+                 emissivity: float = 0.9,
+                 view_factor: float = 1.0):
+        """
+        Args:
+            area_m2: Radiator surface area
+            emissivity: Surface emissivity
+            view_factor: View factor to deep space
+        """
+        self.area = area_m2
+        self.emissivity = emissivity
+        self.view_factor = view_factor
+        self.active = False
+        # Stefan-Boltzmann constant
+        self.sigma = 5.670374419e-8  # W/m^2/K^4
+    
+    def heat_rejection(self, surface_temp_K: float,
+                      ambient_temp_K: float = 3.0) -> float:
+        """
+        Compute radiated heat.
+        
+        Args:
+            surface_temp_K: Radiator surface temperature
+            ambient_temp_K: Ambient temperature (deep space ~3K)
+        
+        Returns:
+            Heat rejection rate (W)
+        """
+        if not self.active:
+            return 0.0
+        
+        temp_diff_4 = surface_temp_K**4 - ambient_temp_K**4
+        if temp_diff_4 <= 0:
+            return 0.0
+        
+        return self.emissivity * self.view_factor * self.area * self.sigma * temp_diff_4
+    
+    def required_area(self, heat_load_W: float, temp_K: float) -> float:
+        """
+        Compute required area for heat load.
+        
+        Args:
+            heat_load_W: Heat to reject
+            temp_K: Operating temperature
         
         Returns:
             Required area (m^2)
         """
-        sigma = 5.67e-8
-        delta = temp**4 - ambient_temp**4
-        if delta <= 0:
+        temp_diff_4 = temp_K**4 - 3.0**4
+        if temp_diff_4 <= 0:
             return float('inf')
-        return power / (self.efficiency * self.emissivity * sigma * delta)
-
-
-@dataclass
-class HeatPipe:
-    """A heat pipe for thermal transfer."""
-    name: str
-    thermal_conductance: float  # W/K
-    max_heat_transfer: float  # W
-    
-    def transfer_heat(self, temp_hot: float, temp_cold: float) -> float:
-        """
-        Compute heat transferred.
         
+        denominator = self.emissivity * self.view_factor * self.sigma * temp_diff_4
+        return heat_load_W / denominator
+    
+    def activate(self):
+        """Activate radiator."""
+        self.active = True
+    
+    def deactivate(self):
+        """Deactivate radiator."""
+        self.active = False
+
+
+class FluidLoop:
+    """
+    Active fluid cooling loop.
+    """
+    
+    def __init__(self, flow_rate_kg_s: float = 0.1,
+                 specific_heat_J_kgK: float = 3900.0,
+                 pump_efficiency: float = 0.7):
+        """
         Args:
-            temp_hot: Hot side temperature (K)
-            temp_cold: Cold side temperature (K)
+            flow_rate_kg_s: Coolant mass flow rate
+            specific_heat_J_kgK: Coolant specific heat
+            pump_efficiency: Pump efficiency
+        """
+        self.flow_rate = flow_rate_kg_s
+        self.specific_heat = specific_heat_J_kgK
+        self.pump_efficiency = pump_efficiency
+        self.active = False
+        self.inlet_temp_K = 280.0
+        self.outlet_temp_K = 300.0
+    
+    def cooling_capacity(self) -> float:
+        """
+        Compute cooling capacity.
         
         Returns:
-            Heat transferred (W)
+            Cooling power (W)
         """
-        if temp_hot <= temp_cold:
+        if not self.active:
             return 0.0
-        q = self.thermal_conductance * (temp_hot - temp_cold)
-        return min(q, self.max_heat_transfer)
-
-
-class ThermalNetwork:
-    """
-    Thermal network solver for spacecraft nodes.
-    """
+        
+        delta_T = self.outlet_temp_K - self.inlet_temp_K
+        return self.flow_rate * self.specific_heat * delta_T
     
-    def __init__(self):
-        self.nodes: Dict[str, ThermalNode] = {}
-        self.heat_pipes: List[Tuple[str, str, HeatPipe]] = []
-        self.radiators: Dict[str, Radiator] = {}
-        self.node_radiator: Dict[str, str] = {}
-    
-    def add_node(self, node: ThermalNode):
-        """Add thermal node."""
-        self.nodes[node.name] = node
-    
-    def add_heat_pipe(self, node1: str, node2: str, pipe: HeatPipe):
-        """Add heat pipe between nodes."""
-        self.heat_pipes.append((node1, node2, pipe))
-    
-    def add_radiator(self, node_name: str, radiator: Radiator):
-        """Attach radiator to node."""
-        self.radiators[radiator.name] = radiator
-        self.node_radiator[node_name] = radiator.name
-    
-    def step(self, dt: float) -> Dict[str, float]:
+    def set_temperatures(self, inlet_K: float, outlet_K: float):
         """
-        Advance thermal simulation by one time step.
+        Set loop temperatures.
         
         Args:
-            dt: Time step (seconds)
+            inlet_K: Inlet temperature
+            outlet_K: Outlet temperature
+        """
+        self.inlet_temp_K = inlet_K
+        self.outlet_temp_K = outlet_K
+    
+    def pump_power(self) -> float:
+        """
+        Compute pump power consumption.
         
         Returns:
-            Updated temperatures
+            Power (W)
         """
-        new_temps = {}
+        if not self.active:
+            return 0.0
         
-        for name, node in self.nodes.items():
-            # Internal heat generation
-            q_in = node.heat_generation
-            
-            # Heat from connected nodes via heat pipes
-            for n1, n2, pipe in self.heat_pipes:
-                if n1 == name:
-                    q_in += pipe.transfer_heat(self.nodes[n1].temperature,
-                                               self.nodes[n2].temperature)
-                elif n2 == name:
-                    q_in += pipe.transfer_heat(self.nodes[n2].temperature,
-                                               self.nodes[n1].temperature)
-            
-            # Heat lost via radiator
-            if name in self.node_radiator:
-                rad_name = self.node_radiator[name]
-                radiator = self.radiators[rad_name]
-                q_out = radiator.radiated_power(node.temperature)
-                q_in -= q_out
-            
-            # Temperature change: dT = Q * dt / C
-            capacity = node.thermal_capacity()
-            if capacity > 0:
-                dT = q_in * dt / capacity
-                new_temps[name] = node.temperature + dT
-            else:
-                new_temps[name] = node.temperature
-        
-        # Update node temperatures
-        for name, temp in new_temps.items():
-            self.nodes[name].temperature = temp
-        
-        return new_temps
+        # Simplified: proportional to flow rate and temperature lift
+        base_power = 50.0  # W baseline
+        return base_power / self.pump_efficiency
     
-    def simulate(self, duration: float, dt: float) -> Dict[str, List[float]]:
-        """
-        Run thermal simulation.
-        
-        Args:
-            duration: Total simulation time (seconds)
-            dt: Time step (seconds)
-        
-        Returns:
-            Temperature history
-        """
-        history = {name: [node.temperature] for name, node in self.nodes.items()}
-        steps = int(duration / dt)
-        
-        for _ in range(steps):
-            temps = self.step(dt)
-            for name, temp in temps.items():
-                history[name].append(temp)
-        
-        return history
+    def activate(self):
+        """Activate fluid loop."""
+        self.active = True
     
-    def get_temperatures(self) -> Dict[str, float]:
-        """Get current temperatures."""
-        return {name: node.temperature for name, node in self.nodes.items()}
+    def deactivate(self):
+        """Deactivate fluid loop."""
+        self.active = False
 
 
-class TemperatureController:
+class Cryocooler:
     """
-    PID temperature controller for thermal regulation.
+    Cryogenic cooler for low-temperature components.
     """
     
-    def __init__(self, kp: float = 1.0, ki: float = 0.1, kd: float = 0.5):
+    def __init__(self, cooling_power_W: float = 1.0,
+                 min_temp_K: float = 4.0,
+                 carnot_efficiency: float = 0.2):
         """
         Args:
-            kp: Proportional gain
-            ki: Integral gain
-            kd: Derivative gain
+            cooling_power_W: Maximum cooling power
+            min_temp_K: Minimum achievable temperature
+            carnot_efficiency: Fraction of Carnot efficiency
         """
-        self.kp = kp
-        self.ki = ki
-        self.kd = kd
-        self.integral = 0.0
-        self.prev_error = 0.0
+        self.cooling_power = cooling_power_W
+        self.min_temp = min_temp_K
+        self.carnot_efficiency = carnot_efficiency
+        self.active = False
+        self.target_temp_K = 80.0
     
-    def compute(self, setpoint: float, measurement: float,
-               dt: float) -> float:
+    def required_input_power(self, cold_temp_K: float,
+                            hot_temp_K: float = 300.0) -> float:
         """
-        Compute control output.
+        Compute required input power.
         
         Args:
-            setpoint: Target temperature (K)
-            measurement: Current temperature (K)
-            dt: Time step (seconds)
+            cold_temp_K: Cold side temperature
+            hot_temp_K: Hot side temperature
         
         Returns:
-            Control output (heating/cooling power in W)
+            Input power (W)
         """
-        error = setpoint - measurement
-        self.integral += error * dt
-        derivative = (error - self.prev_error) / dt if dt > 0 else 0
-        self.prev_error = error
+        if cold_temp_K >= hot_temp_K or cold_temp_K <= 0:
+            return float('inf')
         
-        return self.kp * error + self.ki * self.integral + self.kd * derivative
+        # Carnot COP = T_cold / (T_hot - T_cold)
+        carnot_cop = cold_temp_K / (hot_temp_K - cold_temp_K)
+        actual_cop = carnot_cop * self.carnot_efficiency
+        
+        if actual_cop <= 0:
+            return float('inf')
+        
+        return self.cooling_power / actual_cop
     
-    def reset(self):
-        """Reset controller."""
-        self.integral = 0.0
-        self.prev_error = 0.0
+    def achievable_temp(self, heat_load_W: float,
+                       hot_temp_K: float = 300.0) -> float:
+        """
+        Compute achievable temperature.
+        
+        Args:
+            heat_load_W: Heat load
+            hot_temp_K: Hot side temperature
+        
+        Returns:
+            Achievable temperature (K)
+        """
+        if heat_load_W >= self.cooling_power:
+            return self.min_temp
+        
+        # Simplified: temperature rises with load
+        load_fraction = heat_load_W / self.cooling_power
+        return self.min_temp + (self.target_temp_K - self.min_temp) * load_fraction
+    
+    def activate(self):
+        """Activate cryocooler."""
+        self.active = True
+    
+    def deactivate(self):
+        """Deactivate cryocooler."""
+        self.active = False
 
 
 class ThermalManagement:
@@ -239,48 +312,130 @@ class ThermalManagement:
     """
     
     def __init__(self):
-        self.network = ThermalNetwork()
-        self.controllers: Dict[str, TemperatureController] = {}
+        self.heat_pipe = HeatPipe()
+        self.radiator = Radiator()
+        self.fluid_loop = FluidLoop()
+        self.cryocooler = Cryocooler()
+        self.readings: List[TemperatureReading] = []
+        self.temperature_limits: Dict[ThermalZone, Tuple[float, float]] = {}
+        # (min_K, max_K)
     
-    def add_node(self, node: ThermalNode):
-        """Add thermal node."""
-        self.network.add_node(node)
+    def set_temperature_limits(self, zone: ThermalZone,
+                               min_K: float, max_K: float):
+        """Set temperature limits for zone."""
+        self.temperature_limits[zone] = (min_K, max_K)
     
-    def add_controller(self, node_name: str, controller: TemperatureController):
-        """Add temperature controller for node."""
-        self.controllers[node_name] = controller
+    def add_reading(self, reading: TemperatureReading):
+        """Add temperature reading."""
+        self.readings.append(reading)
     
-    def regulate(self, dt: float) -> Dict[str, float]:
+    def get_zone_temperature(self, zone: ThermalZone) -> Optional[float]:
+        """Get latest temperature for zone."""
+        zone_readings = [r for r in self.readings if r.zone == zone]
+        if not zone_readings:
+            return None
+        return zone_readings[-1].temperature_K
+    
+    def check_zone_health(self, zone: ThermalZone) -> Tuple[bool, float]:
         """
-        Regulate temperatures for one step.
+        Check if zone temperature is within limits.
         
         Args:
-            dt: Time step (seconds)
+            zone: Thermal zone
         
         Returns:
-            Control outputs
+            (healthy, margin_fraction)
         """
-        outputs = {}
+        temp = self.get_zone_temperature(zone)
+        if temp is None:
+            return False, 0.0
         
-        for name, controller in self.controllers.items():
-            if name in self.network.nodes:
-                temp = self.network.nodes[name].temperature
-                output = controller.compute(300.0, temp, dt)
-                # Apply control as negative heat generation (cooling)
-                self.network.nodes[name].heat_generation -= output * 0.1
-                outputs[name] = output
+        limits = self.temperature_limits.get(zone)
+        if not limits:
+            return True, 1.0
         
-        # Step thermal network
-        self.network.step(dt)
+        min_K, max_K = limits
+        if temp < min_K or temp > max_K:
+            return False, 0.0
         
-        return outputs
+        # Margin as fraction of range
+        margin = min(temp - min_K, max_K - temp) / (max_K - min_K)
+        return True, margin
+    
+    def select_cooling_mode(self, zone: ThermalZone,
+                           heat_load_W: float) -> CoolingMode:
+        """
+        Select appropriate cooling mode.
+        
+        Args:
+            zone: Thermal zone
+            heat_load_W: Heat load
+        
+        Returns:
+            Recommended cooling mode
+        """
+        temp = self.get_zone_temperature(zone)
+        if temp is None:
+            return CoolingMode.PASSIVE
+        
+        limits = self.temperature_limits.get(zone, (250, 350))
+        max_temp = limits[1]
+        
+        temp_fraction = temp / max_temp
+        
+        if temp_fraction > 0.95:
+            return CoolingMode.EMERGENCY
+        elif temp_fraction > 0.85:
+            return CoolingMode.CRYOCOOLER if zone == ThermalZone.PAYLOAD else CoolingMode.FLUID_LOOP
+        elif temp_fraction > 0.75:
+            return CoolingMode.FLUID_LOOP
+        elif temp_fraction > 0.6:
+            return CoolingMode.RADIATOR
+        else:
+            return CoolingMode.PASSIVE
+    
+    def activate_cooling(self, mode: CoolingMode):
+        """Activate cooling system for mode."""
+        if mode == CoolingMode.RADIATOR:
+            self.radiator.activate()
+        elif mode == CoolingMode.FLUID_LOOP:
+            self.fluid_loop.activate()
+        elif mode == CoolingMode.CRYOCOOLER:
+            self.cryocooler.activate()
+        elif mode == CoolingMode.EMERGENCY:
+            self.radiator.activate()
+            self.fluid_loop.activate()
+    
+    def deactivate_all(self):
+        """Deactivate all cooling systems."""
+        self.heat_pipe.deactivate()
+        self.radiator.deactivate()
+        self.fluid_loop.deactivate()
+        self.cryocooler.deactivate()
+    
+    def total_heat_rejection(self, surface_temp_K: float) -> float:
+        """
+        Compute total heat rejection capacity.
+        
+        Args:
+            surface_temp_K: Radiator surface temperature
+        
+        Returns:
+            Total rejection (W)
+        """
+        return self.radiator.heat_rejection(surface_temp_K)
     
     def thermal_summary(self) -> Dict:
-        """Get thermal summary."""
-        temps = self.network.get_temperatures()
+        """Get thermal management summary."""
         return {
-            "nodes": len(self.network.nodes),
-            "avg_temperature": sum(temps.values()) / max(1, len(temps)),
-            "max_temperature": max(temps.values()) if temps else 0,
-            "min_temperature": min(temps.values()) if temps else 0
+            "readings": len(self.readings),
+            "zones_monitored": len(self.temperature_limits),
+            "cooling_systems": {
+                "heat_pipe": self.heat_pipe.active,
+                "radiator": self.radiator.active,
+                "fluid_loop": self.fluid_loop.active,
+                "cryocooler": self.cryocooler.active
+            },
+            "radiator_rejection_W": self.radiator.heat_rejection(350.0),
+            "fluid_loop_capacity_W": self.fluid_loop.cooling_capacity()
         }
