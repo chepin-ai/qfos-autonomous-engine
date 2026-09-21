@@ -1,7 +1,7 @@
 """
 Manipulator Kinematics Module
-DH parameters, forward kinematics, inverse kinematics,
-Jacobian matrix, and workspace analysis for autonomous robotics.
+Forward kinematics, inverse kinematics,
+DH parameters, Jacobian, and workspace analysis for autonomous robotics.
 """
 
 import math
@@ -18,17 +18,32 @@ class DHParameter:
     alpha: float
 
 
+@dataclass
+class Pose3D:
+    """3D pose."""
+    x: float
+    y: float
+    z: float
+    roll: float
+    pitch: float
+    yaw: float
+
+
 class ForwardKinematics:
     """
     Forward kinematics for serial manipulators.
     """
     
-    def __init__(self):
-        pass
-    
-    def dh_transform(self, dh: DHParameter) -> List[List[float]]:
+    def __init__(self, dh_params: List[DHParameter]):
         """
-        Compute DH transformation matrix.
+        Args:
+            dh_params: DH parameters for each joint
+        """
+        self.dh_params = dh_params
+    
+    def transformation_matrix(self, dh: DHParameter) -> List[List[float]]:
+        """
+        Compute transformation matrix from DH parameters.
         
         Args:
             dh: DH parameter
@@ -48,97 +63,100 @@ class ForwardKinematics:
             [0.0, 0.0, 0.0, 1.0]
         ]
     
-    def multiply_matrices(self, a: List[List[float]],
-                         b: List[List[float]]) -> List[List[float]]:
+    def matrix_multiply(self, A: List[List[float]],
+                       B: List[List[float]]) -> List[List[float]]:
         """
-        Multiply 4x4 matrices.
+        Multiply two 4x4 matrices.
         
         Args:
-            a: Matrix A
-            b: Matrix B
+            A: First matrix
+            B: Second matrix
         
         Returns:
-            A * B
+            Result
         """
         result = [[0.0] * 4 for _ in range(4)]
         for i in range(4):
             for j in range(4):
                 for k in range(4):
-                    result[i][j] += a[i][k] * b[k][j]
+                    result[i][j] += A[i][k] * B[k][j]
         return result
     
-    def solve(self, dh_params: List[DHParameter]) -> List[List[float]]:
+    def end_effector_pose(self, joint_angles: List[float]) -> Pose3D:
         """
-        Compute end-effector pose.
+        Compute end-effector pose from joint angles.
         
         Args:
-            dh_params: List of DH parameters
+            joint_angles: Joint angles in radians
         
         Returns:
-            End-effector transformation matrix
+            End-effector pose
         """
         T = [[1.0 if i == j else 0.0 for j in range(4)] for i in range(4)]
         
-        for dh in dh_params:
-            T_i = self.dh_transform(dh)
-            T = self.multiply_matrices(T, T_i)
+        for i, dh in enumerate(self.dh_params):
+            dh_joint = DHParameter(
+                dh.theta + joint_angles[i],
+                dh.d, dh.a, dh.alpha
+            )
+            T_i = self.transformation_matrix(dh_joint)
+            T = self.matrix_multiply(T, T_i)
         
-        return T
-    
-    def extract_position(self, T: List[List[float]]) -> Tuple[float, float, float]:
-        """
-        Extract position from transformation matrix.
+        # Extract position
+        x = T[0][3]
+        y = T[1][3]
+        z = T[2][3]
         
-        Args:
-            T: Transformation matrix
+        # Extract orientation (simplified roll, pitch, yaw)
+        yaw = math.atan2(T[1][0], T[0][0])
+        pitch = math.atan2(-T[2][0], math.sqrt(T[2][1] ** 2 + T[2][2] ** 2))
+        roll = math.atan2(T[2][1], T[2][2])
         
-        Returns:
-            (x, y, z)
-        """
-        return (T[0][3], T[1][3], T[2][3])
+        return Pose3D(x, y, z, roll, pitch, yaw)
 
 
 class InverseKinematics:
     """
-    Inverse kinematics for serial manipulators.
+    Inverse kinematics for 2-DOF planar arm.
     """
     
-    def __init__(self):
-        pass
-    
-    def planar_2r(self, x: float, y: float,
-                 link1_length: float,
-                 link2_length: float) -> List[Tuple[float, float]]:
+    def __init__(self, link1_length: float = 1.0,
+                 link2_length: float = 1.0):
         """
-        Solve 2R planar manipulator inverse kinematics.
+        Args:
+            link1_length: Length of link 1
+            link2_length: Length of link 2
+        """
+        self.l1 = link1_length
+        self.l2 = link2_length
+    
+    def solve_2dof(self, x: float, y: float) -> List[Tuple[float, float]]:
+        """
+        Solve 2-DOF planar IK.
         
         Args:
             x: Target x
             y: Target y
-            link1_length: L1
-            link2_length: L2
         
         Returns:
             List of (theta1, theta2) solutions
         """
-        r = math.sqrt(x**2 + y**2)
+        d2 = x ** 2 + y ** 2
+        d = math.sqrt(d2)
         
-        if r > link1_length + link2_length or r < abs(link1_length - link2_length):
+        if d > self.l1 + self.l2 or d < abs(self.l1 - self.l2):
             return []
         
-        # Cosine law for theta2
-        cos_theta2 = (r**2 - link1_length**2 - link2_length**2) / (2.0 * link1_length * link2_length)
+        cos_theta2 = (d2 - self.l1 ** 2 - self.l2 ** 2) / (2.0 * self.l1 * self.l2)
         cos_theta2 = max(-1.0, min(1.0, cos_theta2))
         
         theta2_1 = math.acos(cos_theta2)
-        theta2_2 = -math.acos(cos_theta2)
+        theta2_2 = -theta2_1
         
         solutions = []
-        
         for theta2 in [theta2_1, theta2_2]:
-            k1 = link1_length + link2_length * math.cos(theta2)
-            k2 = link2_length * math.sin(theta2)
-            
+            k1 = self.l1 + self.l2 * math.cos(theta2)
+            k2 = self.l2 * math.sin(theta2)
             theta1 = math.atan2(y, x) - math.atan2(k2, k1)
             solutions.append((theta1, theta2))
         
@@ -147,103 +165,88 @@ class InverseKinematics:
 
 class JacobianCalculator:
     """
-    Calculate Jacobian matrices.
+    Jacobian matrix calculation.
     """
     
-    def __init__(self):
-        pass
-    
-    def planar_2r_jacobian(self, theta1: float,
-                          theta2: float,
-                          link1_length: float,
-                          link2_length: float) -> List[List[float]]:
+    def __init__(self, link_lengths: List[float]):
         """
-        Compute 2R planar Jacobian.
+        Args:
+            link_lengths: Link lengths
+        """
+        self.link_lengths = link_lengths
+    
+    def planar_jacobian(self, joint_angles: List[float]) -> List[List[float]]:
+        """
+        Compute 2-DOF planar Jacobian.
         
         Args:
-            theta1: Joint 1 angle
-            theta2: Joint 2 angle
-            link1_length: L1
-            link2_length: L2
+            joint_angles: Joint angles
         
         Returns:
             2x2 Jacobian
         """
-        s1 = math.sin(theta1)
-        c1 = math.cos(theta1)
-        s12 = math.sin(theta1 + theta2)
-        c12 = math.cos(theta1 + theta2)
+        theta1 = joint_angles[0]
+        theta2 = joint_angles[1]
+        l1 = self.link_lengths[0]
+        l2 = self.link_lengths[1]
         
         J = [
-            [-link1_length * s1 - link2_length * s12, -link2_length * s12],
-            [link1_length * c1 + link2_length * c12, link2_length * c12]
+            [-l1 * math.sin(theta1) - l2 * math.sin(theta1 + theta2),
+             -l2 * math.sin(theta1 + theta2)],
+            [l1 * math.cos(theta1) + l2 * math.cos(theta1 + theta2),
+             l2 * math.cos(theta1 + theta2)]
         ]
-        
         return J
     
-    def determinant(self, J: List[List[float]]) -> float:
+    def manipulability(self, jacobian: List[List[float]]) -> float:
         """
-        Compute determinant of 2x2 Jacobian.
+        Compute Yoshikawa manipulability measure.
         
         Args:
-            J: Jacobian
+            jacobian: Jacobian matrix
         
         Returns:
-            Determinant
+            Manipulability
         """
-        if len(J) != 2 or len(J[0]) != 2:
-            return 0.0
-        return J[0][0] * J[1][1] - J[0][1] * J[1][0]
+        # sqrt(det(J * J^T))
+        # For 2x2: sqrt(det(J)^2) = |det(J)|
+        det = jacobian[0][0] * jacobian[1][1] - jacobian[0][1] * jacobian[1][0]
+        return abs(det)
 
 
 class WorkspaceAnalyzer:
     """
-    Analyze manipulator workspace.
+    Robot workspace analysis.
     """
     
-    def __init__(self):
-        pass
-    
-    def planar_2r_workspace(self, link1_length: float,
-                           link2_length: float) -> Dict:
+    def __init__(self, link_lengths: List[float]):
         """
-        Compute 2R planar workspace.
-        
         Args:
-            link1_length: L1
-            link2_length: L2
+            link_lengths: Link lengths
+        """
+        self.link_lengths = link_lengths
+    
+    def reachable_radius(self) -> Tuple[float, float]:
+        """
+        Compute reachable workspace radius.
         
         Returns:
-            Workspace bounds
+            (min_radius, max_radius)
         """
-        r_max = link1_length + link2_length
-        r_min = abs(link1_length - link2_length)
-        
-        return {
-            "r_max": r_max,
-            "r_min": r_min,
-            "area": math.pi * (r_max**2 - r_min**2)
-        }
+        total = sum(self.link_lengths)
+        max_link = max(self.link_lengths)
+        min_radius = max(0.0, max_link - (total - max_link))
+        return (min_radius, total)
     
-    def is_reachable(self, x: float, y: float,
-                    link1_length: float,
-                    link2_length: float) -> bool:
+    def dexterous_workspace(self) -> float:
         """
-        Check if point is reachable.
-        
-        Args:
-            x: Target x
-            y: Target y
-            link1_length: L1
-            link2_length: L2
+        Compute dexterous workspace area.
         
         Returns:
-            True if reachable
+            Area
         """
-        r = math.sqrt(x**2 + y**2)
-        r_max = link1_length + link2_length
-        r_min = abs(link1_length - link2_length)
-        return r_min <= r <= r_max
+        min_r, max_r = self.reachable_radius()
+        return math.pi * (max_r ** 2 - min_r ** 2)
 
 
 class ManipulatorKinematics:
@@ -252,41 +255,23 @@ class ManipulatorKinematics:
     """
     
     def __init__(self):
-        self.fk = ForwardKinematics()
+        self.fk = None
         self.ik = InverseKinematics()
-        self.jacobian = JacobianCalculator()
-        self.workspace = WorkspaceAnalyzer()
-        self.dh_params: List[DHParameter] = []
+        self.jacobian = JacobianCalculator([1.0, 1.0])
+        self.workspace = WorkspaceAnalyzer([1.0, 1.0])
     
-    def set_dh_params(self, params: List[DHParameter]):
+    def set_dh_params(self, dh_params: List[DHParameter]):
         """
         Set DH parameters.
         
         Args:
-            params: DH parameters
+            dh_params: DH parameters
         """
-        self.dh_params = params
-    
-    def forward_solve(self) -> Dict:
-        """
-        Solve forward kinematics.
-        
-        Returns:
-            End-effector pose
-        """
-        T = self.fk.solve(self.dh_params)
-        pos = self.fk.extract_position(T)
-        
-        return {
-            "x": pos[0],
-            "y": pos[1],
-            "z": pos[2],
-            "transformation": T
-        }
+        self.fk = ForwardKinematics(dh_params)
     
     def mk_summary(self) -> Dict:
         """Get summary."""
         return {
-            "joints": len(self.dh_params),
-            "methods": ["forward_kinematics", "inverse_kinematics", "jacobian", "workspace"]
+            "methods": ["forward_kinematics", "inverse_kinematics", "jacobian", "workspace"],
+            "dimensions": ["2D_planar", "3D_serial"]
         }
