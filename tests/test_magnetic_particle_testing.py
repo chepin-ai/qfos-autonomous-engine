@@ -8,10 +8,10 @@ import os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from magnetic_particle_testing import (Indication, Magnetizer,
-                                       ParticleApplicator,
-                                       IndicationDetector,
-                                       DefectCharacterizer,
+from magnetic_particle_testing import (MTIndication, Magnetizer,
+                                       IndicationAnalyzer,
+                                       ParticleConcentration,
+                                       SensitivityVerifier,
                                        MagneticParticleTesting)
 
 
@@ -19,74 +19,94 @@ class TestMagnetizer(unittest.TestCase):
     """Test magnetizer."""
     
     def setUp(self):
-        self.mag = Magnetizer(2000.0)
+        self.m = Magnetizer()
     
     def test_longitudinal(self):
-        """Should compute longitudinal."""
-        i = self.mag.longitudinal_magnetization(100.0, 100.0)
-        self.assertGreater(i, 0)
-        print(f"  [PASS] Long: {i:.4f}")
+        """Should compute field."""
+        H = self.m.longitudinal_magnetization(1000.0, 5, 0.5)
+        self.assertEqual(H, 10000.0)
+        print(f"  [PASS] H: {H:.0f} A/m")
     
     def test_circular(self):
-        """Should compute circular."""
-        i = self.mag.circular_magnetization(50.0, 100.0)
-        self.assertGreater(i, 0)
-        print(f"  [PASS] Circ: {i:.4f}")
+        """Should compute circular field."""
+        H = self.m.circular_magnetization(1000.0, 0.05)
+        self.assertGreater(H, 0)
+        print(f"  [PASS] Hc: {H:.0f} A/m")
+    
+    def test_required_current(self):
+        """Should compute current."""
+        I = self.m.required_current(0.0254, "ASTM")
+        self.assertAlmostEqual(I, 350.0, delta=0.01)
+        print(f"  [PASS] I: {I:.0f} A")
+    
+    def test_flux_density(self):
+        """Should compute B."""
+        B = self.m.flux_density(10000.0)
+        self.assertGreater(B, 0)
+        print(f"  [PASS] B: {B:.4f} T")
 
 
-class TestParticleApplicator(unittest.TestCase):
-    """Test applicator."""
+class TestIndicationAnalyzer(unittest.TestCase):
+    """Test indication."""
     
     def setUp(self):
-        self.pa = ParticleApplicator(5.0)
+        self.ia = IndicationAnalyzer()
+    
+    def test_area(self):
+        """Should compute area."""
+        a = self.ia.indication_area(5.0, 2.0)
+        self.assertEqual(a, 10.0)
+        print(f"  [PASS] A: {a:.1f} mm2")
+    
+    def test_severity(self):
+        """Should rate severity."""
+        s = self.ia.severity_rating(2.0)
+        self.assertEqual(s, "moderate")
+        print(f"  [PASS] Sev: {s}")
+    
+    def test_false_call(self):
+        """Should estimate false call."""
+        p = self.ia.false_call_probability(0.5, 0.8)
+        self.assertGreater(p, 0)
+        print(f"  [PASS] FP: {p:.1f}")
+
+
+class TestParticleConcentration(unittest.TestCase):
+    """Test concentration."""
+    
+    def setUp(self):
+        self.pc = ParticleConcentration()
     
     def test_concentration(self):
         """Should compute concentration."""
-        c = self.pa.concentration(10.0, 1.0)
-        self.assertEqual(c, 10.0)
-        print(f"  [PASS] Conc: {c}")
+        c = self.pc.concentration_from_settling(0.2, 100.0)
+        self.assertEqual(c, 0.2)
+        print(f"  [PASS] C: {c:.2f} ml/100ml")
+    
+    def test_acceptable(self):
+        """Should check acceptability."""
+        self.assertTrue(self.pc.is_acceptable(0.2))
+        self.assertFalse(self.pc.is_acceptable(0.5))
+        print("  [PASS] Acc")
 
 
-class TestIndicationDetector(unittest.TestCase):
-    """Test detector."""
+class TestSensitivityVerifier(unittest.TestCase):
+    """Test sensitivity."""
     
     def setUp(self):
-        self.det = IndicationDetector(1.0, 0.1)
+        self.sv = SensitivityVerifier()
     
-    def test_detect(self):
-        """Should detect indications."""
-        img = [[0.0, 0.0, 0.0], [0.0, 0.5, 0.0], [0.0, 0.0, 0.0]]
-        inds = self.det.detect(img, 1.0)
-        self.assertEqual(len(inds), 1)
-        print(f"  [PASS] Det: {len(inds)}")
+    def test_pie(self):
+        """Should compute pie sensitivity."""
+        s = self.sv.pie_gauge_sensitivity(6)
+        self.assertEqual(s, 0.75)
+        print(f"  [PASS] Pie: {s:.2f}")
     
-    def test_classify(self):
-        """Should classify."""
-        ind = Indication(0.0, 0.0, 5.0, 1.0, 0.5, 0.0)
-        c = self.det.classify(ind)
-        self.assertEqual(c, "significant")
-        print(f"  [PASS] Cls: {c}")
-
-
-class TestDefectCharacterizer(unittest.TestCase):
-    """Test characterizer."""
-    
-    def setUp(self):
-        self.dc = DefectCharacterizer()
-    
-    def test_depth(self):
-        """Should estimate depth."""
-        d = self.dc.depth_estimate(10.0, 20.0)
-        self.assertEqual(d, 2.0)
-        print(f"  [PASS] Depth: {d}")
-    
-    def test_orientation(self):
-        """Should analyze orientation."""
-        inds = [Indication(0.0, 0.0, 1.0, 1.0, 0.5, 0.0),
-                Indication(1.0, 0.0, 1.0, 1.0, 0.5, 90.0)]
-        o = self.dc.orientation_analysis(inds)
-        self.assertIn("dominant", o)
-        print(f"  [PASS] Ori: {o}")
+    def test_ketos(self):
+        """Should compute Ketos sensitivity."""
+        s = self.sv.ketos_ring_sensitivity(9)
+        self.assertEqual(s, 0.75)
+        print(f"  [PASS] Ket: {s:.2f}")
 
 
 class TestMagneticParticleTesting(unittest.TestCase):
@@ -95,17 +115,10 @@ class TestMagneticParticleTesting(unittest.TestCase):
     def setUp(self):
         self.mpt = MagneticParticleTesting()
     
-    def test_inspect(self):
-        """Should inspect."""
-        img = [[0.0, 0.0, 0.0], [0.0, 0.5, 0.0], [0.0, 0.0, 0.0]]
-        r = self.mpt.inspect_surface(img, 1.0)
-        self.assertIn("indications", r)
-        print(f"  [PASS] Insp: {r}")
-    
     def test_summary(self):
         """Should summarize."""
         s = self.mpt.mpt_summary()
-        self.assertIn("indications", s)
+        self.assertIn("methods", s)
         print(f"  [PASS] Sum: {s}")
 
 

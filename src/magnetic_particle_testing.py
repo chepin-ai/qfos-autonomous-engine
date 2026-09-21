@@ -1,7 +1,7 @@
 """
 Magnetic Particle Testing Module
-Magnetization, particle application, indication detection,
-and defect characterization for autonomous NDT.
+Magnetization, indication detection, field strength measurement,
+particle concentration, and sensitivity verification for autonomous NDT.
 """
 
 import math
@@ -10,199 +10,226 @@ from dataclasses import dataclass
 
 
 @dataclass
-class Indication:
+class MTIndication:
     """Magnetic particle indication."""
-    x_mm: float
-    y_mm: float
+    x: float
+    y: float
     length_mm: float
     width_mm: float
-    intensity: float
     orientation_deg: float
+    severity: str
 
 
 class Magnetizer:
     """
-    Apply magnetic field.
-    """
-    
-    def __init__(self, field_strength_A_m: float = 2000.0):
-        """
-        Args:
-            field_strength_A_m: Field strength
-        """
-        self.field = field_strength_A_m
-    
-    def longitudinal_magnetization(self, material_permeability: float,
-                                   cross_section_mm2: float) -> float:
-        """
-        Compute longitudinal magnetization.
-        
-        Args:
-            material_permeability: Relative permeability
-            cross_section_mm2: Cross-section
-        
-        Returns:
-            Magnetizing current (A)
-        """
-        # Simplified: ampere-turns
-        if cross_section_mm2 <= 0:
-            return 0.0
-        return self.field * cross_section_mm2 * 1e-6 / (4.0 * math.pi * 1e-7 * material_permeability)
-    
-    def circular_magnetization(self, diameter_mm: float,
-                              material_permeability: float) -> float:
-        """
-        Compute circular magnetization current.
-        
-        Args:
-            diameter_mm: Diameter
-            material_permeability: Permeability
-        
-        Returns:
-            Current (A)
-        """
-        if diameter_mm <= 0 or material_permeability <= 0:
-            return 0.0
-        return self.field * math.pi * diameter_mm * 1e-3 / (4.0 * math.pi * 1e-7 * material_permeability)
-
-
-class ParticleApplicator:
-    """
-    Apply magnetic particles.
-    """
-    
-    def __init__(self, particle_size_um: float = 5.0):
-        """
-        Args:
-            particle_size_um: Particle size
-        """
-        self.size = particle_size_um
-    
-    def concentration(self, particle_mass_g: float,
-                     carrier_volume_L: float) -> float:
-        """
-        Compute concentration.
-        
-        Args:
-            particle_mass_g: Mass
-            carrier_volume_L: Volume
-        
-        Returns:
-            Concentration (g/L)
-        """
-        if carrier_volume_L <= 0:
-            return 0.0
-        return particle_mass_g / carrier_volume_L
-
-
-class IndicationDetector:
-    """
-    Detect indications from particle patterns.
-    """
-    
-    def __init__(self, min_length_mm: float = 1.0,
-                 min_intensity: float = 0.1):
-        """
-        Args:
-            min_length_mm: Minimum length
-            min_intensity: Minimum intensity
-        """
-        self.min_length = min_length_mm
-        self.min_intensity = min_intensity
-    
-    def detect(self, image: List[List[float]],
-              pixel_size_mm: float) -> List[Indication]:
-        """
-        Detect indications.
-        
-        Args:
-            image: Intensity image
-            pixel_size_mm: Pixel size
-        
-        Returns:
-            Indications
-        """
-        indications = []
-        
-        for i in range(len(image)):
-            for j in range(len(image[0])):
-                if image[i][j] > self.min_intensity:
-                    # Simplified: single-pixel indication
-                    indications.append(Indication(
-                        x_mm=j * pixel_size_mm,
-                        y_mm=i * pixel_size_mm,
-                        length_mm=pixel_size_mm,
-                        width_mm=pixel_size_mm,
-                        intensity=image[i][j],
-                        orientation_deg=0.0
-                    ))
-        
-        return indications
-    
-    def classify(self, indication: Indication) -> str:
-        """
-        Classify indication.
-        
-        Args:
-            indication: Indication
-        
-        Returns:
-            Classification
-        """
-        if indication.length_mm < 3.0:
-            return "relevant"
-        elif indication.length_mm < 10.0:
-            return "significant"
-        else:
-            return "critical"
-
-
-class DefectCharacterizer:
-    """
-    Characterize defects from indications.
+    Magnetization for magnetic particle testing.
     """
     
     def __init__(self):
         pass
     
-    def depth_estimate(self, indication_length_mm: float,
-                      material_thickness_mm: float) -> float:
+    def longitudinal_magnetization(self, current_A: float,
+                                   turns: int,
+                                   length_m: float) -> float:
         """
-        Estimate defect depth.
+        Compute longitudinal magnetization field.
+        
+        Args:
+            current_A: Current
+            turns: Number of coil turns
+            length_m: Part length
+        
+        Returns:
+            Magnetic field in A/m
+        """
+        if length_m <= 0:
+            return 0.0
+        return (current_A * turns) / length_m
+    
+    def circular_magnetization(self, current_A: float,
+                              diameter_m: float) -> float:
+        """
+        Compute circular magnetization field.
+        
+        Args:
+            current_A: Current
+            diameter_m: Part diameter
+        
+        Returns:
+            Magnetic field in A/m
+        """
+        if diameter_m <= 0:
+            return 0.0
+        return current_A / (math.pi * diameter_m)
+    
+    def required_current(self, diameter_m: float,
+                        standard: str = "ASTM") -> float:
+        """
+        Compute required magnetizing current.
+        
+        Args:
+            diameter_m: Part diameter
+            standard: Standard to use
+        
+        Returns:
+            Current in A
+        """
+        if diameter_m <= 0:
+            return 0.0
+        if standard == "ASTM":
+            return 350.0 * diameter_m / 25.4e-3  # 350 A per inch
+        return 0.0
+    
+    def flux_density(self, magnetic_field_A_m: float,
+                    permeability_H_m: float = 4.0e-7 * math.pi) -> float:
+        """
+        Compute magnetic flux density.
+        
+        Args:
+            magnetic_field_A_m: Magnetic field
+            permeability_H_m: Permeability
+        
+        Returns:
+            Flux density in Tesla
+        """
+        return permeability_H_m * magnetic_field_A_m
+
+
+class IndicationAnalyzer:
+    """
+    Magnetic particle indication analysis.
+    """
+    
+    def __init__(self):
+        pass
+    
+    def indication_area(self, length_mm: float,
+                       width_mm: float) -> float:
+        """
+        Compute indication area.
+        
+        Args:
+            length_mm: Length
+            width_mm: Width
+        
+        Returns:
+            Area in mm^2
+        """
+        return length_mm * width_mm
+    
+    def severity_rating(self, length_mm: float,
+                       standard: str = "ASTM") -> str:
+        """
+        Rate indication severity.
+        
+        Args:
+            length_mm: Indication length
+            standard: Standard
+        
+        Returns:
+            Severity rating
+        """
+        if standard == "ASTM":
+            if length_mm < 1.5:
+                return "minor"
+            elif length_mm < 3.0:
+                return "moderate"
+            else:
+                return "severe"
+        return "unknown"
+    
+    def false_call_probability(self, indication_length_mm: float,
+                              background_level: float) -> float:
+        """
+        Estimate false call probability.
         
         Args:
             indication_length_mm: Indication length
-            material_thickness_mm: Thickness
+            background_level: Background level
         
         Returns:
-            Depth estimate
+            Probability
         """
-        # Simplified: assume surface-breaking
-        return min(indication_length_mm / 5.0, material_thickness_mm)
+        # Simplified: shorter indications in high background more likely false
+        if indication_length_mm < 1.0 and background_level > 0.5:
+            return 0.7
+        elif indication_length_mm < 2.0:
+            return 0.3
+        return 0.1
+
+
+class ParticleConcentration:
+    """
+    Magnetic particle concentration control.
+    """
     
-    def orientation_analysis(self, indications: List[Indication]) -> Dict:
+    def __init__(self):
+        pass
+    
+    def concentration_from_settling(self, settled_volume_ml: float,
+                                   bath_volume_ml: float) -> float:
         """
-        Analyze orientations.
+        Compute particle concentration from settling test.
         
         Args:
-            indications: Indications
+            settled_volume_ml: Settled particle volume
+            bath_volume_ml: Total bath volume
         
         Returns:
-            Analysis
+            Concentration in ml/100ml
         """
-        if not indications:
-            return {"dominant": 0.0, "spread": 0.0}
+        if bath_volume_ml <= 0:
+            return 0.0
+        return settled_volume_ml / bath_volume_ml * 100.0
+    
+    def is_acceptable(self, concentration_ml_per_100ml: float,
+                     particle_type: str = "wet") -> bool:
+        """
+        Check if concentration is acceptable.
         
-        orientations = [ind.orientation_deg for ind in indications]
-        avg = sum(orientations) / len(orientations)
+        Args:
+            concentration_ml_per_100ml: Concentration
+            particle_type: Particle type
         
-        # Circular standard deviation
-        sin_sum = sum(math.sin(math.radians(o)) for o in orientations)
-        cos_sum = sum(math.cos(math.radians(o)) for o in orientations)
-        r = math.sqrt(sin_sum**2 + cos_sum**2) / len(orientations)
-        spread = math.degrees(math.sqrt(-2.0 * math.log(max(r, 1e-10))))
+        Returns:
+            Whether acceptable
+        """
+        if particle_type == "wet":
+            return 0.1 <= concentration_ml_per_100ml <= 0.4
+        return False
+
+
+class SensitivityVerifier:
+    """
+    MT sensitivity verification.
+    """
+    
+    def __init__(self):
+        pass
+    
+    def pie_gauge_sensitivity(self, visible_sectors: int) -> float:
+        """
+        Compute sensitivity from pie gauge.
         
-        return {"dominant": avg, "spread": spread}
+        Args:
+            visible_sectors: Number of visible sectors
+        
+        Returns:
+            Sensitivity fraction
+        """
+        return visible_sectors / 8.0
+    
+    def ketos_ring_sensitivity(self, visible_holes: int) -> float:
+        """
+        Compute sensitivity from Ketos ring.
+        
+        Args:
+            visible_holes: Number of visible holes
+        
+        Returns:
+            Sensitivity fraction
+        """
+        return visible_holes / 12.0
 
 
 class MagneticParticleTesting:
@@ -212,41 +239,13 @@ class MagneticParticleTesting:
     
     def __init__(self):
         self.magnetizer = Magnetizer()
-        self.applicator = ParticleApplicator()
-        self.detector = IndicationDetector()
-        self.characterizer = DefectCharacterizer()
-        self.indications: List[Indication] = []
-    
-    def inspect_surface(self, image: List[List[float]],
-                       pixel_size_mm: float) -> Dict:
-        """
-        Inspect surface.
-        
-        Args:
-            image: Image
-            pixel_size_mm: Pixel size
-        
-        Returns:
-            Results
-        """
-        self.indications = self.detector.detect(image, pixel_size_mm)
-        
-        classifications = {}
-        for ind in self.indications:
-            c = self.detector.classify(ind)
-            classifications[c] = classifications.get(c, 0) + 1
-        
-        orient = self.characterizer.orientation_analysis(self.indications)
-        
-        return {
-            "indications": len(self.indications),
-            "classifications": classifications,
-            "orientation": orient
-        }
+        self.indication = IndicationAnalyzer()
+        self.concentration = ParticleConcentration()
+        self.sensitivity = SensitivityVerifier()
     
     def mpt_summary(self) -> Dict:
         """Get summary."""
         return {
-            "indications": len(self.indications),
-            "field_strength": self.magnetizer.field
+            "methods": ["magnetization", "indication_analysis", "concentration", "sensitivity"],
+            "standards": ["ASTM", "ISO"]
         }
