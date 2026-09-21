@@ -1,7 +1,7 @@
 """
 Powder Metallurgy Module
-Powder characterization, compaction,
-sintering kinetics, density and porosity for autonomous materials engineering.
+Powder characterization, compaction modeling,
+sintering kinetics, and densification for autonomous materials engineering.
 """
 
 import math
@@ -10,100 +10,116 @@ from dataclasses import dataclass
 
 
 @dataclass
-class PowderProperties:
+class PowderParticle:
     """Powder particle properties."""
-    d10_um: float
-    d50_um: float
-    d90_um: float
-    apparent_density_g_cm3: float
-    tap_density_g_cm3: float
+    diameter_um: float
+    density_g_cm3: float
 
 
 class PowderCharacterization:
     """
-    Powder particle characterization.
+    Powder particle size and shape characterization.
     """
     
     def __init__(self):
         pass
     
-    def span(self, powder: PowderProperties) -> float:
+    def sauter_mean_diameter(self, particles: List[PowderParticle]) -> float:
         """
-        Compute powder span (distribution width).
+        Compute Sauter mean diameter.
         
         Args:
-            powder: Powder properties
+            particles: Particle list
         
         Returns:
-            Span
+            SMD (um)
         """
-        if powder.d50_um <= 0:
+        if not particles:
             return 0.0
-        return (powder.d90_um - powder.d10_um) / powder.d50_um
+        num = sum(p.diameter_um ** 3 for p in particles)
+        den = sum(p.diameter_um ** 2 for p in particles)
+        if den <= 0:
+            return 0.0
+        return num / den
     
-    def hausner_ratio(self, powder: PowderProperties) -> float:
+    def packing_density(self, particles: List[PowderParticle],
+                       bulk_density_g_cm3: float) -> float:
         """
-        Compute Hausner ratio (flowability indicator).
+        Compute packing density (relative density).
         
         Args:
-            powder: Powder properties
+            particles: Particle list
+            bulk_density_g_cm3: Bulk density
         
         Returns:
-            Hausner ratio
+            Packing density
         """
-        if powder.apparent_density_g_cm3 <= 0:
+        if not particles:
             return 0.0
-        return powder.tap_density_g_cm3 / powder.apparent_density_g_cm3
+        true_density = sum(p.density_g_cm3 for p in particles) / len(particles)
+        if true_density <= 0:
+            return 0.0
+        return bulk_density_g_cm3 / true_density
     
-    def carr_index(self, powder: PowderProperties) -> float:
+    void_fraction = packing_density
+    
+    def specific_surface_area(self, particles: List[PowderParticle]) -> float:
         """
-        Compute Carr index (%).
+        Compute specific surface area (simplified spherical).
         
         Args:
-            powder: Powder properties
+            particles: Particle list
         
         Returns:
-            Carr index
+            SSA (m2/g)
         """
-        if powder.tap_density_g_cm3 <= 0:
+        if not particles:
             return 0.0
-        return 100.0 * (powder.tap_density_g_cm3 - powder.apparent_density_g_cm3) / powder.tap_density_g_cm3
+        # For spheres: SSA = 6 / (rho * d)
+        total_sa = sum(math.pi * p.diameter_um**2 for p in particles)
+        total_mass = sum((math.pi / 6.0) * p.diameter_um**3 * p.density_g_cm3 for p in particles)
+        if total_mass <= 0:
+            return 0.0
+        # Convert to m2/g
+        return (total_sa * 1e-12) / (total_mass * 1e-6)
 
 
-class PowderCompaction:
+class CompactionModeling:
     """
-    Powder compaction analysis.
+    Powder compaction modeling.
     """
     
     def __init__(self):
         pass
     
-    def green_density(self, powder_mass_g: float,
-                     compact_volume_cm3: float) -> float:
+    def relative_density(self, green_density_g_cm3: float,
+                        theoretical_density_g_cm3: float = 7.87) -> float:
         """
-        Compute green density.
+        Compute relative density.
         
         Args:
-            powder_mass_g: Powder mass
-            compact_volume_cm3: Compact volume
+            green_density_g_cm3: Green density
+            theoretical_density_g_cm3: Theoretical density
         
         Returns:
-            Green density (g/cm^3)
+            Relative density
         """
-        if compact_volume_cm3 <= 0:
+        if theoretical_density_g_cm3 <= 0:
             return 0.0
-        return powder_mass_g / compact_volume_cm3
+        return green_density_g_cm3 / theoretical_density_g_cm3
+    
+    void_fraction = relative_density
     
     def compaction_pressure(self, yield_strength_MPa: float,
                            relative_density: float,
                            friction_coefficient: float = 0.2) -> float:
         """
-        Estimate required compaction pressure.
+        Estimate compaction pressure (simplified).
         
         Args:
             yield_strength_MPa: Material yield strength
-            relative_density: Relative density
-            friction_coefficient: Die wall friction
+            relative_density: Target relative density
+            friction_coefficient: Die friction
         
         Returns:
             Pressure (MPa)
@@ -112,129 +128,101 @@ class PowderCompaction:
             return 0.0
         # Simplified: pressure increases with density
         return yield_strength_MPa * math.log(1.0 / (1.0 - relative_density)) * (1.0 + friction_coefficient)
-    
-    def relative_density(self, green_density: float,
-                        theoretical_density: float) -> float:
-        """
-        Compute relative density.
-        
-        Args:
-            green_density: Green density
-            theoretical_density: Theoretical density
-        
-        Returns:
-            Relative density
-        """
-        if theoretical_density <= 0:
-            return 0.0
-        return green_density / theoretical_density
 
 
 class SinteringKinetics:
     """
-    Sintering kinetics and densification.
+    Sintering kinetics modeling.
     """
     
     def __init__(self):
         pass
     
-    def arrhenius_rate(self, temperature_K: float,
-                      activation_energy_J_mol: float,
-                      pre_exponential: float = 1e10) -> float:
+    def densification_rate(self, time_s: float,
+                          activation_energy_J_mol: float = 2e5,
+                          temperature_K: float = 1500.0,
+                          gas_constant: float = 8.314) -> float:
         """
-        Compute Arrhenius rate constant.
+        Compute densification rate (simplified Arrhenius).
         
         Args:
-            temperature_K: Temperature
-            activation_energy_J_mol: Activation energy
-            pre_exponential: Pre-exponential factor
-        
-        Returns:
-            Rate constant
-        """
-        R = 8.314
-        if temperature_K <= 0:
-            return 0.0
-        return pre_exponential * math.exp(-activation_energy_J_mol / (R * temperature_K))
-    
-    def densification(self, initial_density: float,
-                     time_s: float,
-                     rate_constant: float,
-                     final_density: float = 0.98) -> float:
-        """
-        Compute density after sintering.
-        
-        Args:
-            initial_density: Initial relative density
-            time_s: Sintering time
-            rate_constant: Rate constant
-            final_density: Final density limit
-        
-        Returns:
-            Current density
-        """
-        if rate_constant <= 0:
-            return initial_density
-        # Simplified: exponential approach to final density
-        return final_density - (final_density - initial_density) * math.exp(-rate_constant * time_s)
-    
-    def grain_growth(self, initial_grain_size_um: float,
-                    time_s: float,
-                    growth_rate_um_s: float) -> float:
-        """
-        Estimate grain size after sintering.
-        
-        Args:
-            initial_grain_size_um: Initial grain size
             time_s: Time
-            growth_rate_um_s: Growth rate
+            activation_energy_J_mol: Activation energy
+            temperature_K: Temperature
+            gas_constant: Gas constant
         
         Returns:
-            Grain size
+            Densification rate
         """
-        # Simplified: parabolic growth
-        return math.sqrt(initial_grain_size_um**2 + growth_rate_um_s * time_s)
+        if time_s <= 0 or temperature_K <= 0:
+            return 0.0
+        # Simplified: rate proportional to exp(-E/RT) * t^n
+        rate = math.exp(-activation_energy_J_mol / (gas_constant * temperature_K))
+        return rate * (time_s ** 0.5)
+    
+    def neck_growth_ratio(self, time_s: float,
+                         diffusion_coefficient_m2_s: float = 1e-12,
+                         particle_radius_m: float = 1e-5) -> float:
+        """
+        Compute neck growth ratio (x/r).
+        
+        Args:
+            time_s: Time
+            diffusion_coefficient_m2_s: Diffusivity
+            particle_radius_m: Particle radius
+        
+        Returns:
+            Neck growth ratio
+        """
+        if time_s <= 0 or particle_radius_m <= 0:
+            return 0.0
+        # Simplified: x/r ~ (Dt/r^2)^0.2
+        return (diffusion_coefficient_m2_s * time_s / particle_radius_m**2) ** 0.2
 
 
-class PorosityAnalysis:
+class Densification:
     """
-    Porosity and density analysis.
+    Densification analysis.
     """
     
     def __init__(self):
         pass
     
-    def porosity(self, density: float,
-                theoretical_density: float) -> float:
+    def final_density(self, green_density_g_cm3: float,
+                     sintering_shrinkage_pct: float = 15.0) -> float:
         """
-        Compute porosity fraction.
+        Estimate final density from shrinkage.
         
         Args:
-            density: Measured density
-            theoretical_density: Theoretical density
+            green_density_g_cm3: Green density
+            sintering_shrinkage_pct: Linear shrinkage
         
         Returns:
-            Porosity
+            Final density
         """
-        if theoretical_density <= 0:
-            return 0.0
-        return 1.0 - density / theoretical_density
+        # Volume change ~ (1 - shrinkage)^3
+        vol_factor = (1.0 - sintering_shrinkage_pct / 100.0) ** 3
+        if vol_factor <= 0:
+            return green_density_g_cm3
+        return green_density_g_cm3 / vol_factor
     
-    def open_porosity(self, apparent_density: float,
-                     bulk_density: float) -> float:
+    def shrinkage_from_density(self, green_density_g_cm3: float,
+                              final_density_g_cm3: float) -> float:
         """
-        Compute open porosity.
+        Compute shrinkage from density change.
         
         Args:
-            apparent_density: Apparent density
-            bulk_density: Bulk density
+            green_density_g_cm3: Green density
+            final_density_g_cm3: Final density
         
         Returns:
-            Open porosity
+            Linear shrinkage (%)
         """
-        if bulk_density <= 0:
+        if final_density_g_cm3 <= 0 or green_density_g_cm3 <= 0:
             return 0.0
-        return (bulk_density - apparent_density) / bulk_density
+        vol_ratio = green_density_g_cm3 / final_density_g_cm3
+        linear_shrinkage = 1.0 - vol_ratio ** (1.0 / 3.0)
+        return linear_shrinkage * 100.0
 
 
 class PowderMetallurgy:
@@ -244,13 +232,13 @@ class PowderMetallurgy:
     
     def __init__(self):
         self.characterization = PowderCharacterization()
-        self.compaction = PowderCompaction()
+        self.compaction = CompactionModeling()
         self.sintering = SinteringKinetics()
-        self.porosity = PorosityAnalysis()
+        self.densification = Densification()
     
-    def metallurgy_summary(self) -> Dict:
+    def powder_summary(self) -> Dict:
         """Get summary."""
         return {
-            "processes": ["characterization", "compaction", "sintering"],
-            "properties": ["density", "porosity", "grain_size"]
+            "processes": ["characterization", "compaction", "sintering", "densification"],
+            "outputs": ["smd", "relative_density", "shrinkage"]
         }
