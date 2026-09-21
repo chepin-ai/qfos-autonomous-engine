@@ -5,157 +5,125 @@ Unit tests for quantum control module.
 import unittest
 import sys
 import os
-import math
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from quantum_control import (ControlPulse, PulseShaper,
-                             OptimalControl,
-                             GateCalibrator,
-                             FeedbackControl,
+from quantum_control import (ControlPulse, OptimalControl,
+                             PulseShaper,
                              DynamicalDecoupling,
+                             GateCalibration,
                              QuantumControl)
-
-
-class TestPulseShaper(unittest.TestCase):
-    """Test pulse shaper."""
-    
-    def setUp(self):
-        self.ps = PulseShaper(1e-9)
-    
-    def test_gaussian(self):
-        """Should generate Gaussian."""
-        p = self.ps.gaussian_pulse(1.0, 1e-9, 5e-9, 10e-9)
-        self.assertGreater(len(p), 0)
-        print(f"  [PASS] Gauss: {len(p)} pts")
-    
-    def test_rectangular(self):
-        """Should generate rectangular."""
-        p = self.ps.rectangular_pulse(1.0, 0.0, 10e-9)
-        self.assertGreater(len(p), 0)
-        print(f"  [PASS] Rect: {len(p)} pts")
-    
-    def test_ramp(self):
-        """Should generate ramp."""
-        p = self.ps.ramp_pulse(0.0, 1.0, 10e-9)
-        self.assertGreater(len(p), 0)
-        print(f"  [PASS] Ramp: {len(p)} pts")
 
 
 class TestOptimalControl(unittest.TestCase):
     """Test optimal control."""
     
     def setUp(self):
-        self.oc = OptimalControl(1)
+        self.oc = OptimalControl()
+        self.oc.add_pulse(1.0, 0.0, 1.0, 1.0)
+        self.oc.add_pulse(0.5, 0.0, 2.0, 1.0)
     
-    def test_fidelity(self):
-        """Should compute fidelity."""
-        f = self.oc.fidelity([1.0, 0.0], [1.0, 0.0])
-        self.assertAlmostEqual(f, 1.0, places=5)
-        print(f"  [PASS] Fid: {f:.4f}")
+    def test_duration(self):
+        """Should compute duration."""
+        d = self.oc.total_duration()
+        self.assertEqual(d, 3.0)
+        print(f"  [PASS] Dur: {d}")
     
-    def test_unitary_fidelity(self):
-        """Should compute unitary fidelity."""
-        u = [[1.0, 0.0], [0.0, 1.0]]
-        f = self.oc.unitary_fidelity(u, u)
-        self.assertAlmostEqual(f, 1.0, places=5)
-        print(f"  [PASS] UFid: {f:.4f}")
+    def test_power(self):
+        """Should compute power."""
+        p = self.oc.average_power()
+        self.assertGreater(p, 0)
+        print(f"  [PASS] Pwr: {p:.4f}")
+    
+    def test_infidelity(self):
+        """Should compute infidelity."""
+        U = [[1.0, 0.0], [0.0, 1.0]]
+        inf = self.oc.infidelity(U, U)
+        self.assertEqual(inf, 0.0)
+        print(f"  [PASS] Inf: {inf}")
 
 
-class TestGateCalibrator(unittest.TestCase):
-    """Test calibrator."""
+class TestPulseShaper(unittest.TestCase):
+    """Test pulse shaper."""
     
     def setUp(self):
-        self.gc = GateCalibrator()
+        self.ps = PulseShaper()
     
-    def test_add(self):
-        """Should add calibration."""
-        self.gc.add_calibration("X", math.pi, math.pi * 1.01)
-        self.assertIn("X", self.gc.calibration_data)
-        print("  [PASS] AddCal")
+    def test_gaussian(self):
+        """Should shape Gaussian."""
+        g = self.ps.gaussian_pulse(0.0, 1.0, 1.0, 0.0)
+        self.assertEqual(g, 1.0)
+        print(f"  [PASS] G: {g}")
     
-    def test_corrected(self):
-        """Should correct angle."""
-        self.gc.add_calibration("X", math.pi, math.pi * 1.01)
-        a = self.gc.corrected_angle("X", math.pi)
-        self.assertAlmostEqual(a, math.pi * 0.99, places=5)
-        print(f"  [PASS] Corr: {a:.4f}")
+    def test_drag(self):
+        """Should shape DRAG."""
+        i, q = self.ps.drag_pulse(0.0, 1.0, 1.0, 0.0)
+        self.assertEqual(i, 1.0)
+        print(f"  [PASS] DRAG: I={i:.4f}, Q={q:.4f}")
     
-    def test_budget(self):
-        """Should compute budget."""
-        self.gc.add_calibration("X", math.pi, math.pi * 1.01)
-        b = self.gc.error_budget()
-        self.assertIn("max_error_rad", b)
-        print(f"  [PASS] Bud: {b}")
-
-
-class TestFeedbackControl(unittest.TestCase):
-    """Test feedback."""
-    
-    def setUp(self):
-        self.fc = FeedbackControl(1.0, 0.1, 0.01)
-    
-    def test_pid(self):
-        """Should update PID."""
-        o = self.fc.pid_update(10.0, 8.0, 0.1)
-        self.assertGreater(o, 0)
-        print(f"  [PASS] PID: {o:.4f}")
-    
-    def test_reset(self):
-        """Should reset."""
-        self.fc.pid_update(10.0, 8.0, 0.1)
-        self.fc.reset()
-        self.assertEqual(self.fc.integral, 0.0)
-        print("  [PASS] Rst")
+    def test_square(self):
+        """Should shape square."""
+        s = self.ps.square_pulse(0.5, 1.0, 0.0, 1.0)
+        self.assertEqual(s, 1.0)
+        print(f"  [PASS] Sq: {s}")
 
 
 class TestDynamicalDecoupling(unittest.TestCase):
-    """Test decoupling."""
+    """Test DD."""
     
     def setUp(self):
         self.dd = DynamicalDecoupling()
     
-    def test_hahn(self):
-        """Should generate Hahn echo."""
-        s = self.dd.hahn_echo(1e-6)
-        self.assertEqual(len(s), 3)
-        print(f"  [PASS] Hahn: {s}")
-    
     def test_cp(self):
         """Should generate CP."""
-        s = self.dd.cp_sequence(4, 1e-6)
-        self.assertGreater(len(s), 0)
-        print(f"  [PASS] CP: {len(s)} steps")
+        s = self.dd.carr_purcell(4)
+        self.assertEqual(len(s), 4)
+        print(f"  [PASS] CP: {s}")
     
     def test_cpmg(self):
         """Should generate CPMG."""
-        s = self.dd.cpmg_sequence(4, 1e-6)
-        self.assertGreater(len(s), 0)
-        print(f"  [PASS] CPMG: {len(s)} steps")
+        s = self.dd.carr_purcell_meiboom_gill(4)
+        self.assertEqual(len(s), 4)
+        print(f"  [PASS] CPMG: {s}")
+    
+    def test_xy4(self):
+        """Should generate XY4."""
+        s = self.dd.xy4()
+        self.assertEqual(len(s), 4)
+        print(f"  [PASS] XY4: {s}")
+
+
+class TestGateCalibration(unittest.TestCase):
+    """Test calibration."""
+    
+    def setUp(self):
+        self.gc = GateCalibration()
+        self.gc.add_data("X", 0.99)
+        self.gc.add_data("X", 0.98)
+    
+    def test_avg(self):
+        """Should compute average."""
+        a = self.gc.average_fidelity("X")
+        self.assertAlmostEqual(a, 0.985)
+        print(f"  [PASS] Avg: {a:.4f}")
+    
+    def test_best(self):
+        """Should get best."""
+        b = self.gc.best_fidelity("X")
+        self.assertEqual(b, 0.99)
+        print(f"  [PASS] Best: {b}")
 
 
 class TestQuantumControl(unittest.TestCase):
     """Test unified controller."""
     
     def setUp(self):
-        self.qc = QuantumControl(1)
-    
-    def test_pulse(self):
-        """Should generate pulse."""
-        p = self.qc.generate_pulse_sequence("gaussian", 1.0, 10e-9)
-        self.assertGreater(len(p), 0)
-        print(f"  [PASS] Pul: {len(p)} pts")
-    
-    def test_calibrate(self):
-        """Should calibrate."""
-        self.qc.calibrate_gate("X", math.pi, math.pi * 1.01)
-        self.assertIn("X", self.qc.calibrator.calibration_data)
-        print("  [PASS] Cal")
+        self.qc = QuantumControl()
     
     def test_summary(self):
         """Should summarize."""
-        s = self.qc.qctrl_summary()
-        self.assertIn("pulse_types", s)
+        s = self.qc.qc_summary()
+        self.assertIn("methods", s)
         print(f"  [PASS] Sum: {s}")
 
 
