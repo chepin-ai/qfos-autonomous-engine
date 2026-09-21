@@ -1,240 +1,234 @@
 """
 Sensor Fusion Module
-Multi-sensor Kalman fusion, IMU/GPS/Lidar integration
-for autonomous spacecraft navigation.
+Kalman filter, particle filter, complementary filter,
+and multi-sensor data fusion for autonomous robotics.
 """
 
+import math
+import random
 from typing import Dict, List, Tuple, Optional
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass
 class SensorReading:
-    """A reading from a sensor."""
-    sensor_id: str
+    """Sensor reading."""
+    value: float
     timestamp: float
-    values: List[float]
-    covariance: List[List[float]]
+    sensor_id: str
+    variance: float
 
 
-@dataclass
-class FusedState:
-    """Fused state estimate."""
-    position: List[float]
-    velocity: List[float]
-    orientation: List[float]
-    covariance: List[List[float]]
-    timestamp: float = 0.0
-
-
-class KalmanFusion:
+class KalmanFilter1D:
     """
-    Multi-sensor Extended Kalman Filter for state estimation.
+    1D Kalman filter.
     """
     
-    def __init__(self, state_dim: int = 6):
+    def __init__(self, process_variance: float = 1e-5,
+                 measurement_variance: float = 1e-2,
+                 initial_estimate: float = 0.0):
         """
         Args:
-            state_dim: State dimension (pos + vel)
+            process_variance: Process noise
+            measurement_variance: Measurement noise
+            initial_estimate: Initial estimate
         """
-        self.state_dim = state_dim
-        self.state: List[float] = [0.0] * state_dim
-        self.covariance: List[List[float]] = self._identity(state_dim, 1.0)
-        self.process_noise: List[List[float]] = self._identity(state_dim, 0.01)
+        self.process_var = process_variance
+        self.measurement_var = measurement_variance
+        self.estimate = initial_estimate
+        self.estimate_error = 1.0
     
-    def _identity(self, n: int, scale: float = 1.0) -> List[List[float]]:
-        """Create scaled identity matrix."""
-        return [[scale if i == j else 0.0 for j in range(n)] for i in range(n)]
-    
-    def _mat_add(self, A: List[List[float]], B: List[List[float]]) -> List[List[float]]:
-        """Matrix addition."""
-        return [[A[i][j] + B[i][j] for j in range(len(A[0]))] for i in range(len(A))]
-    
-    def _mat_mul(self, A: List[List[float]], B: List[List[float]]) -> List[List[float]]:
-        """Matrix multiplication."""
-        result = [[0.0] * len(B[0]) for _ in range(len(A))]
-        for i in range(len(A)):
-            for j in range(len(B[0])):
-                for k in range(len(B)):
-                    result[i][j] += A[i][k] * B[k][j]
-        return result
-    
-    def _mat_vec_mul(self, A: List[List[float]], v: List[float]) -> List[float]:
-        """Matrix-vector multiplication."""
-        return [sum(A[i][j] * v[j] for j in range(len(v))) for i in range(len(A))]
-    
-    def _transpose(self, A: List[List[float]]) -> List[List[float]]:
-        """Matrix transpose."""
-        return [[A[j][i] for j in range(len(A))] for i in range(len(A[0]))]
-    
-    def _inverse_2x2(self, A: List[List[float]]) -> List[List[float]]:
-        """Inverse of 2x2 matrix."""
-        det = A[0][0] * A[1][1] - A[0][1] * A[1][0]
-        if abs(det) < 1e-10:
-            return [[1.0, 0.0], [0.0, 1.0]]
-        inv_det = 1.0 / det
-        return [
-            [A[1][1] * inv_det, -A[0][1] * inv_det],
-            [-A[1][0] * inv_det, A[0][0] * inv_det]
-        ]
-    
-    def _inverse(self, A: List[List[float]]) -> List[List[float]]:
-        """Matrix inverse (supports 2x2 and diagonal)."""
-        n = len(A)
-        if n == 2:
-            return self._inverse_2x2(A)
-        
-        # For diagonal or near-diagonal matrices
-        result = [[0.0] * n for _ in range(n)]
-        for i in range(n):
-            if abs(A[i][i]) > 1e-10:
-                result[i][i] = 1.0 / A[i][i]
-        return result
-    
-    def predict(self, dt: float):
+    def update(self, measurement: float) -> float:
         """
-        Prediction step.
+        Update with measurement.
         
         Args:
+            measurement: Measurement
+        
+        Returns:
+            Updated estimate
+        """
+        # Prediction
+        self.estimate_error += self.process_var
+        
+        # Update
+        kalman_gain = self.estimate_error / (self.estimate_error + self.measurement_var)
+        self.estimate += kalman_gain * (measurement - self.estimate)
+        self.estimate_error *= (1.0 - kalman_gain)
+        
+        return self.estimate
+    
+    def get_estimate(self) -> float:
+        """Get current estimate."""
+        return self.estimate
+
+
+class ComplementaryFilter:
+    """
+    Complementary filter for sensor fusion.
+    """
+    
+    def __init__(self, alpha: float = 0.98):
+        """
+        Args:
+            alpha: Weight for high-pass component
+        """
+        self.alpha = alpha
+        self.angle = 0.0
+    
+    def update(self, gyro_rate: float,
+              accel_angle: float,
+              dt: float) -> float:
+        """
+        Update filter.
+        
+        Args:
+            gyro_rate: Gyroscope rate (deg/s)
+            accel_angle: Accelerometer angle (deg)
             dt: Time step
+        
+        Returns:
+            Fused angle
         """
-        n = self.state_dim
-        # State transition: position += velocity * dt
-        F = self._identity(n)
-        half = n // 2
-        for i in range(half):
-            F[i][i + half] = dt
-        
-        # Predict state
-        self.state = self._mat_vec_mul(F, self.state)
-        
-        # Predict covariance
-        FT = self._transpose(F)
-        self.covariance = self._mat_add(
-            self._mat_mul(self._mat_mul(F, self.covariance), FT),
-            self.process_noise
-        )
+        self.angle = (self.alpha * (self.angle + gyro_rate * dt) +
+                     (1.0 - self.alpha) * accel_angle)
+        return self.angle
+
+
+class ParticleFilter:
+    """
+    Particle filter for localization.
+    """
     
-    def update(self, reading: SensorReading,
-              measurement_matrix: List[List[float]]):
+    def __init__(self, num_particles: int = 100,
+                 state_range: Tuple[float, float] = (-10.0, 10.0)):
         """
-        Update step with sensor reading.
+        Args:
+            num_particles: Number of particles
+            state_range: State range
+        """
+        self.num_particles = num_particles
+        self.state_range = state_range
+        self.particles: List[float] = []
+        self.weights: List[float] = []
+        self._init_particles()
+    
+    def _init_particles(self):
+        """Initialize particles."""
+        span = self.state_range[1] - self.state_range[0]
+        self.particles = [self.state_range[0] + random.random() * span
+                         for _ in range(self.num_particles)]
+        self.weights = [1.0 / self.num_particles] * self.num_particles
+    
+    def predict(self, motion: float,
+               motion_noise: float = 0.1):
+        """
+        Predict step.
         
         Args:
-            reading: Sensor reading
-            measurement_matrix: H matrix
+            motion: Motion
+            motion_noise: Motion noise
         """
-        z = reading.values
-        R = reading.covariance
-        H = measurement_matrix
-        HT = self._transpose(H)
-        
-        # Innovation
-        y = [z[i] - sum(H[i][j] * self.state[j] for j in range(self.state_dim))
-             for i in range(len(z))]
-        
-        # Innovation covariance
-        S = self._mat_add(self._mat_mul(self._mat_mul(H, self.covariance), HT), R)
-        
-        # Kalman gain
-        S_inv = self._inverse(S)
-        K = self._mat_mul(self._mat_mul(self.covariance, HT), S_inv)
-        
-        # Update state
-        self.state = [self.state[i] + sum(K[i][j] * y[j] for j in range(len(y)))
-                      for i in range(self.state_dim)]
-        
-        # Update covariance
-        I = self._identity(self.state_dim)
-        KH = self._mat_mul(K, H)
-        self.covariance = [[self.covariance[i][j] - KH[i][j]
-                           for j in range(self.state_dim)]
-                          for i in range(self.state_dim)]
+        for i in range(self.num_particles):
+            self.particles[i] += motion + random.gauss(0.0, motion_noise)
     
-    def get_state(self) -> List[float]:
-        """Get current state estimate."""
-        return self.state[:]
+    def update(self, measurement: float,
+              measurement_noise: float = 0.1):
+        """
+        Update weights based on measurement.
+        
+        Args:
+            measurement: Measurement
+            measurement_noise: Measurement noise
+        """
+        for i in range(self.num_particles):
+            diff = self.particles[i] - measurement
+            self.weights[i] *= math.exp(-0.5 * (diff / measurement_noise) ** 2)
+        
+        # Normalize
+        total = sum(self.weights)
+        if total > 0:
+            self.weights = [w / total for w in self.weights]
     
-    def get_position(self) -> List[float]:
-        """Get position estimate."""
-        half = self.state_dim // 2
-        return self.state[:half]
+    def resample(self):
+        """Resample particles."""
+        new_particles = []
+        index = 0
+        cumulative = 0.0
+        u = random.random() / self.num_particles
+        
+        for i in range(self.num_particles):
+            cumulative += self.weights[i]
+            while u < cumulative and index < self.num_particles:
+                new_particles.append(self.particles[i])
+                u += 1.0 / self.num_particles
+                index += 1
+        
+        while len(new_particles) < self.num_particles:
+            new_particles.append(random.choice(self.particles))
+        
+        self.particles = new_particles
+        self.weights = [1.0 / self.num_particles] * self.num_particles
     
-    def get_velocity(self) -> List[float]:
-        """Get velocity estimate."""
-        half = self.state_dim // 2
-        return self.state[half:]
+    def estimate(self) -> float:
+        """
+        Compute weighted estimate.
+        
+        Returns:
+            Estimate
+        """
+        return sum(p * w for p, w in zip(self.particles, self.weights))
 
 
-class IMUProcessor:
+class MultiSensorFusion:
     """
-    Process IMU readings (accelerometer + gyroscope).
+    Multi-sensor data fusion.
     """
     
     def __init__(self):
-        self.accel_bias: List[float] = [0.0, 0.0, 0.0]
-        self.gyro_bias: List[float] = [0.0, 0.0, 0.0]
-        self.last_accel: List[float] = [0.0, 0.0, 0.0]
-        self.last_gyro: List[float] = [0.0, 0.0, 0.0]
+        self.sensors: Dict[str, KalmanFilter1D] = {}
     
-    def process_accel(self, raw: List[float]) -> List[float]:
+    def add_sensor(self, sensor_id: str,
+                  process_variance: float = 1e-5,
+                  measurement_variance: float = 1e-2):
         """
-        Process accelerometer reading.
+        Add sensor.
         
         Args:
-            raw: Raw acceleration [ax, ay, az] m/s^2
+            sensor_id: Sensor ID
+            process_variance: Process variance
+            measurement_variance: Measurement variance
+        """
+        self.sensors[sensor_id] = KalmanFilter1D(process_variance,
+                                                   measurement_variance)
+    
+    def update(self, sensor_id: str, measurement: float) -> float:
+        """
+        Update sensor.
+        
+        Args:
+            sensor_id: Sensor ID
+            measurement: Measurement
         
         Returns:
-            Calibrated acceleration
+            Estimate
         """
-        calibrated = [raw[i] - self.accel_bias[i] for i in range(3)]
-        self.last_accel = calibrated
-        return calibrated
+        if sensor_id not in self.sensors:
+            self.add_sensor(sensor_id)
+        return self.sensors[sensor_id].update(measurement)
     
-    def process_gyro(self, raw: List[float]) -> List[float]:
+    def fused_estimate(self) -> float:
         """
-        Process gyroscope reading.
-        
-        Args:
-            raw: Raw angular velocity [wx, wy, wz] rad/s
+        Compute fused estimate from all sensors.
         
         Returns:
-            Calibrated angular velocity
+            Fused estimate
         """
-        calibrated = [raw[i] - self.gyro_bias[i] for i in range(3)]
-        self.last_gyro = calibrated
-        return calibrated
-    
-    def integrate_velocity(self, accel: List[float], dt: float,
-                          current_vel: List[float]) -> List[float]:
-        """
-        Integrate acceleration to velocity.
+        if not self.sensors:
+            return 0.0
         
-        Args:
-            accel: Acceleration
-            dt: Time step
-            current_vel: Current velocity
-        
-        Returns:
-            Updated velocity
-        """
-        return [current_vel[i] + accel[i] * dt for i in range(3)]
-    
-    def calibrate_bias(self, accel_samples: List[List[float]],
-                      gyro_samples: List[List[float]]):
-        """
-        Calibrate biases from stationary samples.
-        
-        Args:
-            accel_samples: Stationary accelerometer readings
-            gyro_samples: Stationary gyroscope readings
-        """
-        if accel_samples:
-            self.accel_bias = [sum(s[i] for s in accel_samples) / len(accel_samples)
-                              for i in range(3)]
-        if gyro_samples:
-            self.gyro_bias = [sum(s[i] for s in gyro_samples) / len(gyro_samples)
-                             for i in range(3)]
+        estimates = [kf.get_estimate() for kf in self.sensors.values()]
+        return sum(estimates) / len(estimates)
 
 
 class SensorFusion:
@@ -242,88 +236,15 @@ class SensorFusion:
     Unified sensor fusion controller.
     """
     
-    def __init__(self, state_dim: int = 6):
-        """
-        Args:
-            state_dim: State dimension
-        """
-        self.kalman = KalmanFusion(state_dim)
-        self.imu = IMUProcessor()
-        self.readings: List[SensorReading] = []
+    def __init__(self):
+        self.kalman = KalmanFilter1D()
+        self.complementary = ComplementaryFilter()
+        self.particle = ParticleFilter()
+        self.multi = MultiSensorFusion()
     
-    def add_reading(self, reading: SensorReading):
-        """Add sensor reading."""
-        self.readings.append(reading)
-    
-    def fuse_gps(self, reading: SensorReading, dt: float):
-        """
-        Fuse GPS reading.
-        
-        Args:
-            reading: GPS position reading
-            dt: Time step
-        """
-        self.kalman.predict(dt)
-        
-        half = self.kalman.state_dim // 2
-        H = [[0.0] * self.kalman.state_dim for _ in range(half)]
-        for i in range(half):
-            H[i][i] = 1.0
-        
-        self.kalman.update(reading, H)
-    
-    def fuse_imu(self, accel: List[float], gyro: List[float],
-                dt: float):
-        """
-        Fuse IMU reading.
-        
-        Args:
-            accel: Acceleration [ax, ay, az]
-            gyro: Angular velocity [wx, wy, wz]
-            dt: Time step
-        """
-        calibrated_accel = self.imu.process_accel(accel)
-        self.imu.process_gyro(gyro)
-        
-        self.kalman.predict(dt)
-        
-        # Use accelerometer as indirect velocity measurement
-        half = self.kalman.state_dim // 2
-        vel = self.kalman.get_velocity()
-        new_vel = self.imu.integrate_velocity(calibrated_accel, dt, vel)
-        
-        reading = SensorReading(
-            sensor_id="imu",
-            timestamp=0.0,
-            values=new_vel,
-            covariance=[[0.1, 0, 0], [0, 0.1, 0], [0, 0, 0.1]]
-        )
-        
-        H = [[0.0] * self.kalman.state_dim for _ in range(half)]
-        for i in range(half):
-            H[i][i + half] = 1.0
-        
-        self.kalman.update(reading, H)
-    
-    def get_fused_state(self) -> FusedState:
-        """Get fused state estimate."""
-        half = self.kalman.state_dim // 2
-        pos = self.kalman.get_position()
-        vel = self.kalman.get_velocity()
-        
-        return FusedState(
-            position=pos,
-            velocity=vel,
-            orientation=[0.0, 0.0, 0.0],
-            covariance=self.kalman.covariance,
-            timestamp=0.0
-        )
-    
-    def fusion_summary(self) -> Dict:
-        """Get fusion summary."""
+    def sf_summary(self) -> Dict:
+        """Get summary."""
         return {
-            "readings_processed": len(self.readings),
-            "state_dim": self.kalman.state_dim,
-            "position": self.kalman.get_position(),
-            "velocity": self.kalman.get_velocity()
+            "filters": ["kalman", "complementary", "particle", "multi_sensor"],
+            "sensors": len(self.multi.sensors)
         }
