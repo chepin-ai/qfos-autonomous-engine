@@ -8,76 +8,89 @@ import os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from residual_stress_analysis import (StressTensor, XRDSin2Psi,
-                                      HoleDrilling,
-                                      DepthProfiler,
+from residual_stress_analysis import (StrainRosette, HoleDrillingMethod,
+                                      XrayDiffraction,
+                                      Sin2PsiMethod,
+                                      StressRelaxation,
                                       ResidualStressAnalysis)
 
 
-class TestXRDSin2Psi(unittest.TestCase):
-    """Test XRD."""
-    
-    def setUp(self):
-        self.xrd = XRDSin2Psi(200.0, 0.3, 150.0)
-    
-    def test_strain(self):
-        """Should compute strain."""
-        d = [1.0, 1.001, 1.002]
-        strains = self.xrd.strain_from_psi(d, [0.0, 15.0, 30.0])
-        self.assertEqual(len(strains), 3)
-        print(f"  [PASS] Strains: {strains}")
-    
-    def test_stress_from_slope(self):
-        """Should compute stress."""
-        s = self.xrd.stress_from_slope(0.001)
-        self.assertIsInstance(s, float)
-        print(f"  [PASS] Stress: {s:.2f} MPa")
-    
-    def test_linear_fit(self):
-        """Should fit line."""
-        sin2 = [0.0, 0.25, 0.5, 0.75]
-        d = [1.0, 1.001, 1.002, 1.003]
-        a, b = self.xrd.linear_fit(sin2, d)
-        self.assertAlmostEqual(b, 0.004, delta=0.001)
-        print(f"  [PASS] Fit: a={a:.4f}, b={b:.4f}")
-
-
-class TestHoleDrilling(unittest.TestCase):
+class TestHoleDrillingMethod(unittest.TestCase):
     """Test hole drilling."""
     
     def setUp(self):
-        self.hd = HoleDrilling(5.0)
+        self.hdm = HoleDrillingMethod()
     
-    def test_relaxed_strains(self):
-        """Should compute relaxed strains."""
-        r = self.hd.relaxed_strains([100.0, 200.0, 300.0], [90.0, 185.0, 280.0])
-        self.assertEqual(r[0], 10.0)
-        print(f"  [PASS] Rel: {r}")
-    
-    def test_principal_stresses(self):
+    def test_principal(self):
         """Should compute principal stresses."""
-        s1, s2, th = self.hd.principal_stresses(100e-6, 50e-6, -50e-6)
-        self.assertIsInstance(s1, float)
-        print(f"  [PASS] S1={s1:.2f}, S2={s2:.2f}, th={th:.1f}")
+        s = StrainRosette(100e-6, 50e-6, -50e-6)
+        p = self.hdm.principal_stresses(s)
+        self.assertGreater(p[0], p[1])
+        print(f"  [PASS] S1={p[0]:.1f}, S2={p[1]:.1f}")
+    
+    def test_direction(self):
+        """Should compute direction."""
+        s = StrainRosette(100e-6, 50e-6, -50e-6)
+        d = self.hdm.stress_direction(s)
+        self.assertIsInstance(d, float)
+        print(f"  [PASS] Dir: {d:.1f}")
 
 
-class TestDepthProfiler(unittest.TestCase):
-    """Test profiler."""
+class TestXrayDiffraction(unittest.TestCase):
+    """Test XRD."""
     
     def setUp(self):
-        self.dp = DepthProfiler()
+        self.xrd = XrayDiffraction()
     
-    def test_layer_correction(self):
-        """Should apply correction."""
-        s = self.dp.layer_removal_correction(100.0, 0.5, 10.0)
-        self.assertGreater(s, 100.0)
-        print(f"  [PASS] Corr: {s:.2f} MPa")
+    def test_d_spacing(self):
+        """Should compute d-spacing."""
+        d = self.xrd.d_spacing(45.0)
+        self.assertGreater(d, 0)
+        print(f"  [PASS] d: {d:.4f} nm")
     
-    def test_integrate(self):
-        """Should integrate stress."""
-        force = self.dp.integrate_stress([100.0, 80.0, 60.0], [0.0, 1.0, 2.0])
-        self.assertGreater(force, 0)
-        print(f"  [PASS] Force: {force:.2f} N/mm")
+    def test_strain(self):
+        """Should compute strain."""
+        e = self.xrd.strain_from_d(0.202, 0.200)
+        self.assertAlmostEqual(e, 0.01, delta=1e-10)
+        print(f"  [PASS] Strain: {e:.4f}")
+
+
+class TestSin2PsiMethod(unittest.TestCase):
+    """Test sin2psi."""
+    
+    def setUp(self):
+        self.s2p = Sin2PsiMethod()
+    
+    def test_stress(self):
+        """Should compute stress."""
+        s = self.s2p.stress_from_slope(1e-4)
+        self.assertGreater(s, 0)
+        print(f"  [PASS] S: {s:.1f}")
+    
+    def test_sin2psi(self):
+        """Should compute sin2psi."""
+        v = self.s2p.sin2psi_values([0.0, 30.0, 45.0])
+        self.assertEqual(len(v), 3)
+        print(f"  [PASS] sin2: {v}")
+
+
+class TestStressRelaxation(unittest.TestCase):
+    """Test relaxation."""
+    
+    def setUp(self):
+        self.sr = StressRelaxation()
+    
+    def test_relaxed(self):
+        """Should compute relaxed stress."""
+        s = self.sr.relaxed_stress(100.0, 50.0)
+        self.assertLess(s, 100.0)
+        print(f"  [PASS] Srel: {s:.2f}")
+    
+    def test_rate(self):
+        """Should compute rate."""
+        r = self.sr.relaxation_rate(100.0, 10.0)
+        self.assertEqual(r, -10.0)
+        print(f"  [PASS] Rate: {r:.1f}")
 
 
 class TestResidualStressAnalysis(unittest.TestCase):

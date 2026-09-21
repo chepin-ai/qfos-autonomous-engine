@@ -1,7 +1,7 @@
 """
 Residual Stress Analysis Module
-XRD sin2psi, hole drilling, strain relaxation,
-stress tensor calculation, and depth profiling for autonomous materials engineering.
+Hole drilling, X-ray diffraction,
+sin2psi method, and stress relaxation for autonomous materials engineering.
 """
 
 import math
@@ -10,218 +10,191 @@ from dataclasses import dataclass
 
 
 @dataclass
-class StressTensor:
-    """Stress tensor components."""
-    sigma_11: float
-    sigma_22: float
-    sigma_12: float
-    sigma_33: float = 0.0
+class StrainRosette:
+    """Strain gauge rosette readings."""
+    e0: float
+    e45: float
+    e90: float
 
 
-class XRDSin2Psi:
+class HoleDrillingMethod:
     """
-    X-ray diffraction sin^2(psi) method.
+    Hole-drilling residual stress measurement.
     """
     
-    def __init__(self, youngs_modulus_GPa: float = 200.0,
-                 poisson_ratio: float = 0.3,
-                 diffraction_angle_deg: float = 150.0):
+    def __init__(self, hole_diameter_mm: float = 2.0):
         """
         Args:
+            hole_diameter_mm: Hole diameter
+        """
+        self.d = hole_diameter_mm
+    
+    def principal_stresses(self, strains: StrainRosette,
+                          youngs_modulus_GPa: float = 200.0,
+                          poisson_ratio: float = 0.3) -> Tuple[float, float]:
+        """
+        Compute principal stresses from strain rosette.
+        
+        Args:
+            strains: Rosette readings
             youngs_modulus_GPa: Young's modulus
-            poisson_ratio: Poisson's ratio
-            diffraction_angle_deg: 2*theta angle
-        """
-        self.E = youngs_modulus_GPa * 1e3
-        self.nu = poisson_ratio
-        self.theta0 = math.radians(diffraction_angle_deg / 2.0)
-    
-    def strain_from_psi(self, d_spacing_angstrom: List[float],
-                       psi_degrees: List[float]) -> List[float]:
-        """
-        Compute strain from d-spacing vs sin^2(psi).
-        
-        Args:
-            d_spacing_angstrom: Measured d-spacings
-            psi_degrees: Tilt angles
+            poisson_ratio: Poisson ratio
         
         Returns:
-            Strain values
+            (sigma1, sigma2) MPa
         """
-        if not d_spacing_angstrom:
-            return []
-        d0 = d_spacing_angstrom[0]
-        strains = []
-        for d in d_spacing_angstrom:
-            strain = (d - d0) / d0
-            strains.append(strain)
-        return strains
+        E = youngs_modulus_GPa * 1e3
+        e_avg = (strains.e0 + strains.e90) / 2.0
+        e_diff = (strains.e0 - strains.e90) / 2.0
+        e_shear = strains.e45 - e_avg
+        
+        denom = 1.0 - poisson_ratio**2
+        sigma_avg = E * e_avg / denom
+        tau_max = E * math.sqrt(e_diff**2 + e_shear**2) / denom
+        
+        sigma1 = sigma_avg + tau_max
+        sigma2 = sigma_avg - tau_max
+        return sigma1, sigma2
     
-    def stress_from_slope(self, slope: float) -> float:
+    def stress_direction(self, strains: StrainRosette) -> float:
         """
-        Compute stress from d vs sin^2(psi) slope.
+        Compute principal stress direction.
         
         Args:
-            slope: Slope of d vs sin^2(psi)
+            strains: Rosette readings
         
         Returns:
-            Stress in MPa
+            Angle (degrees)
         """
-        # Stress = E / (1 + nu) * 1 / d0 * slope / (pi / 180 * cot(theta0))
-        # Simplified:
-        cot_theta = 1.0 / math.tan(self.theta0)
-        if cot_theta == 0:
-            return 0.0
-        factor = self.E / (1.0 + self.nu) * slope * cot_theta
-        return factor * 1e-6  # Convert to MPa
-    
-    def linear_fit(self, sin2psi: List[float],
-                  d_spacing: List[float]) -> Tuple[float, float]:
-        """
-        Linear fit d = a + b * sin^2(psi).
-        
-        Args:
-            sin2psi: sin^2(psi) values
-            d_spacing: d-spacings
-        
-        Returns:
-            (intercept, slope)
-        """
-        n = len(sin2psi)
-        if n == 0:
-            return 0.0, 0.0
-        
-        sx = sum(sin2psi)
-        sy = sum(d_spacing)
-        sxx = sum(x ** 2 for x in sin2psi)
-        sxy = sum(x * y for x, y in zip(sin2psi, d_spacing))
-        
-        denom = n * sxx - sx ** 2
-        if denom == 0:
-            return sy / n, 0.0
-        
-        slope = (n * sxy - sx * sy) / denom
-        intercept = (sy - slope * sx) / n
-        return intercept, slope
+        e_diff = (strains.e0 - strains.e90) / 2.0
+        e_shear = strains.e45 - (strains.e0 + strains.e90) / 2.0
+        if abs(e_diff) < 1e-10:
+            return 45.0 if e_shear > 0 else -45.0
+        return 0.5 * math.degrees(math.atan2(e_shear, e_diff))
 
 
-class HoleDrilling:
+class XrayDiffraction:
     """
-    Hole drilling strain gauge method.
-    """
-    
-    def __init__(self, rosette_radius_mm: float = 5.0):
-        """
-        Args:
-            rosette_radius_mm: Rosette radius
-        """
-        self.r = rosette_radius_mm
-    
-    def relaxed_strains(self, strains_before: List[float],
-                       strains_after: List[float]) -> List[float]:
-        """
-        Compute relaxed strains.
-        
-        Args:
-            strains_before: Strains before drilling
-            strains_after: Strains after drilling
-        
-        Returns:
-            Relaxed strains
-        """
-        return [b - a for b, a in zip(strains_before, strains_after)]
-    
-    def principal_stresses(self, epsilon_0: float,
-                          epsilon_45: float,
-                          epsilon_90: float,
-                          E_GPa: float = 200.0,
-                          nu: float = 0.3) -> Tuple[float, float, float]:
-        """
-        Compute principal stresses from rosette.
-        
-        Args:
-            epsilon_0: 0 degree strain
-            epsilon_45: 45 degree strain
-            epsilon_90: 90 degree strain
-            E_GPa: Young's modulus
-            nu: Poisson's ratio
-        
-        Returns:
-            (sigma_1, sigma_2, theta_deg)
-        """
-        E = E_GPa * 1e3
-        
-        # Average and difference
-        eps_avg = (epsilon_0 + epsilon_90) / 2.0
-        eps_diff = (epsilon_0 - epsilon_90) / 2.0
-        eps_shear = epsilon_45 - eps_avg
-        
-        # Principal strains
-        gamma = math.sqrt(eps_diff ** 2 + eps_shear ** 2)
-        eps_1 = eps_avg + gamma
-        eps_2 = eps_avg - gamma
-        
-        # Principal stresses
-        sigma_1 = E / (1.0 - nu ** 2) * (eps_1 + nu * eps_2) * 1e-6
-        sigma_2 = E / (1.0 - nu ** 2) * (eps_2 + nu * eps_1) * 1e-6
-        
-        # Angle
-        theta = 0.5 * math.degrees(math.atan2(eps_shear, eps_diff))
-        
-        return sigma_1, sigma_2, theta
-
-
-class DepthProfiler:
-    """
-    Residual stress depth profiling.
+    X-ray diffraction stress measurement.
     """
     
     def __init__(self):
         pass
     
-    def layer_removal_correction(self, stress_measured_MPa: float,
-                                layer_thickness_mm: float,
-                                total_thickness_mm: float) -> float:
+    def d_spacing(self, theta_deg: float,
+                 wavelength_nm: float = 0.154) -> float:
         """
-        Apply layer removal correction.
+        Compute d-spacing from Bragg angle.
         
         Args:
-            stress_measured_MPa: Measured stress
-            layer_thickness_mm: Removed layer thickness
-            total_thickness_mm: Total thickness
+            theta_deg: Bragg angle
+            wavelength_nm: X-ray wavelength
         
         Returns:
-            Corrected stress
+            d-spacing (nm)
         """
-        if total_thickness_mm <= 0:
-            return stress_measured_MPa
-        ratio = layer_thickness_mm / total_thickness_mm
-        # Simplified correction factor
-        correction = 1.0 / (1.0 - ratio)
-        return stress_measured_MPa * correction
+        theta_rad = math.radians(theta_deg)
+        return wavelength_nm / (2.0 * math.sin(theta_rad))
     
-    def integrate_stress(self, stresses_MPa: List[float],
-                        depths_mm: List[float]) -> float:
+    def strain_from_d(self, d_measured_nm: float,
+                     d0_nm: float) -> float:
         """
-        Integrate stress over depth.
+        Compute strain from d-spacing change.
         
         Args:
-            stresses_MPa: Stress profile
-            depths_mm: Depths
+            d_measured_nm: Measured d
+            d0_nm: Stress-free d
         
         Returns:
-            Integrated force per unit width in N/mm
+            Strain
         """
-        if len(stresses_MPa) < 2 or len(depths_mm) < 2:
+        if d0_nm <= 0:
             return 0.0
+        return (d_measured_nm - d0_nm) / d0_nm
+
+
+class Sin2PsiMethod:
+    """
+    sin2psi XRD stress analysis.
+    """
+    
+    def __init__(self):
+        pass
+    
+    def stress_from_slope(self, slope: float,
+                         youngs_modulus_GPa: float = 200.0,
+                         poisson_ratio: float = 0.3,
+                         psi_angles_deg: List[float] = None) -> float:
+        """
+        Compute stress from d vs sin2psi slope.
         
-        total = 0.0
-        for i in range(len(stresses_MPa) - 1):
-            dz = depths_mm[i + 1] - depths_mm[i]
-            avg_stress = (stresses_MPa[i] + stresses_MPa[i + 1]) / 2.0
-            total += avg_stress * dz
+        Args:
+            slope: d vs sin2psi slope
+            youngs_modulus_GPa: Young's modulus
+            poisson_ratio: Poisson ratio
+            psi_angles_deg: Psi angles used
         
-        return total
+        Returns:
+            Stress (MPa)
+        """
+        E = youngs_modulus_GPa * 1e3
+        # Stress = slope * E / (1 + nu) * conversion factor
+        return slope * E / (1.0 + poisson_ratio)
+    
+    def sin2psi_values(self, psi_angles_deg: List[float]) -> List[float]:
+        """
+        Compute sin2psi values.
+        
+        Args:
+            psi_angles_deg: Psi tilt angles
+        
+        Returns:
+            sin2psi values
+        """
+        return [math.sin(math.radians(p))**2 for p in psi_angles_deg]
+
+
+class StressRelaxation:
+    """
+    Stress relaxation analysis.
+    """
+    
+    def __init__(self):
+        pass
+    
+    def relaxed_stress(self, initial_stress_MPa: float,
+                      time_h: float,
+                      relaxation_time_h: float = 100.0) -> float:
+        """
+        Compute relaxed stress (exponential decay).
+        
+        Args:
+            initial_stress_MPa: Initial stress
+            time_h: Time
+            relaxation_time_h: Relaxation time constant
+        
+        Returns:
+            Remaining stress (MPa)
+        """
+        if relaxation_time_h <= 0:
+            return initial_stress_MPa
+        return initial_stress_MPa * math.exp(-time_h / relaxation_time_h)
+    
+    def relaxation_rate(self, stress_MPa: float,
+                       time_h: float) -> float:
+        """
+        Compute relaxation rate.
+        
+        Args:
+            stress_MPa: Current stress
+            time_h: Time
+        
+        Returns:
+            Rate (MPa/h)
+        """
+        if time_h <= 0:
+            return 0.0
+        return -stress_MPa / time_h
 
 
 class ResidualStressAnalysis:
@@ -230,13 +203,14 @@ class ResidualStressAnalysis:
     """
     
     def __init__(self):
-        self.xrd = XRDSin2Psi()
-        self.drilling = HoleDrilling()
-        self.profiler = DepthProfiler()
+        self.hole_drilling = HoleDrillingMethod()
+        self.xrd = XrayDiffraction()
+        self.sin2psi = Sin2PsiMethod()
+        self.relaxation = StressRelaxation()
     
     def stress_summary(self) -> Dict:
         """Get summary."""
         return {
-            "methods": ["XRD_sin2psi", "hole_drilling", "depth_profiling"],
-            "applications": ["welds", "coatings", "machined_surfaces"]
+            "methods": ["hole_drilling", "xrd", "sin2psi", "relaxation"],
+            "applications": ["welding", "machining", "additive_manufacturing"]
         }
