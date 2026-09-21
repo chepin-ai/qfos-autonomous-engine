@@ -1,384 +1,300 @@
 """
 Acoustic Emission Module
-AE sensor array, hit detection, event clustering,
-and source localization for autonomous structural health monitoring.
+AE signal analysis, source location, Kaiser effect,
+hit detection, and amplitude analysis for autonomous NDT.
 """
 
 import math
 from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass
-from enum import Enum
-
-
-class AEEventType(Enum):
-    """Types of acoustic emission events."""
-    CRACK_GROWTH = "crack_growth"
-    FIBER_BREAKAGE = "fiber_breakage"
-    DELAMINATION = "delamination"
-    FRICTION = "friction"
-    PLASTIC_DEFORMATION = "plastic_deformation"
 
 
 @dataclass
 class AEHit:
-    """Single acoustic emission hit."""
-    sensor_id: int
+    """Acoustic emission hit."""
+    time_us: float
     amplitude_dB: float
-    energy: float
     duration_us: float
     rise_time_us: float
+    energy: float
     counts: int
-    timestamp: float = 0.0
 
 
-class AESensor:
+class HitDetector:
     """
-    Single acoustic emission sensor.
+    AE hit detection from raw signals.
     """
     
-    def __init__(self, sensor_id: int, position: Tuple[float, float],
-                 threshold_dB: float = 40.0):
+    def __init__(self, threshold_dB: float = 40.0,
+                 dead_time_us: float = 100.0):
         """
         Args:
-            sensor_id: Sensor ID
-            position: (x, y) position
             threshold_dB: Detection threshold
+            dead_time_us: Dead time
         """
-        self.sensor_id = sensor_id
-        self.position = position
         self.threshold = threshold_dB
-        self.hits: List[AEHit] = []
+        self.dead_time = dead_time_us
     
-    def detect(self, signal_amplitude: float,
-              energy: float = 0.0,
-              duration_us: float = 0.0,
-              rise_time_us: float = 0.0,
-              counts: int = 0,
-              timestamp: float = 0.0) -> Optional[AEHit]:
+    def detect_hits(self, times_us: List[float],
+                   amplitudes_dB: List[float]) -> List[AEHit]:
         """
-        Detect hit from signal.
+        Detect hits from signal.
         
         Args:
-            signal_amplitude: Signal amplitude
-            energy: Energy
-            duration_us: Duration
-            rise_time_us: Rise time
-            counts: Counts
-            timestamp: Timestamp
+            times_us: Time samples
+            amplitudes_dB: Amplitude samples
         
         Returns:
-            Hit or None
+            Detected hits
         """
-        if signal_amplitude < self.threshold:
-            return None
+        hits = []
+        in_hit = False
+        hit_start = 0
+        hit_peak = 0.0
+        hit_peak_time = 0.0
+        hit_counts = 0
+        hit_energy = 0.0
+        last_hit_end = -self.dead_time
         
-        hit = AEHit(
-            sensor_id=self.sensor_id,
-            amplitude_dB=signal_amplitude,
-            energy=energy,
-            duration_us=duration_us,
-            rise_time_us=rise_time_us,
-            counts=counts,
-            timestamp=timestamp
-        )
-        self.hits.append(hit)
-        return hit
+        for i, (t, amp) in enumerate(zip(times_us, amplitudes_dB)):
+            if amp > self.threshold:
+                if not in_hit and t - last_hit_end > self.dead_time:
+                    in_hit = True
+                    hit_start = t
+                    hit_peak = amp
+                    hit_peak_time = t
+                    hit_counts = 1
+                    hit_energy = 10.0 ** (amp / 20.0)
+                elif in_hit:
+                    hit_counts += 1
+                    hit_energy += 10.0 ** (amp / 20.0)
+                    if amp > hit_peak:
+                        hit_peak = amp
+                        hit_peak_time = t
+            else:
+                if in_hit:
+                    in_hit = False
+                    duration = t - hit_start
+                    rise_time = hit_peak_time - hit_start
+                    hits.append(AEHit(hit_start, hit_peak, duration,
+                                    rise_time, hit_energy, hit_counts))
+                    last_hit_end = t
+        
+        return hits
     
-    def hit_rate(self, time_window_s: float = 60.0) -> float:
+    def count_rate(self, hits: List[AEHit],
+                  time_window_s: float = 1.0) -> float:
         """
-        Compute hit rate.
+        Compute hit count rate.
         
         Args:
+            hits: Detected hits
             time_window_s: Time window
         
         Returns:
             Hits per second
         """
-        if time_window_s <= 0:
+        if not hits or time_window_s <= 0:
             return 0.0
-        recent = [h for h in self.hits if h.timestamp >= (self.hits[-1].timestamp if self.hits else 0) - time_window_s]
-        return len(recent) / time_window_s
+        return len(hits) / time_window_s
 
 
-class AEEventDetector:
+class SourceLocator:
     """
-    Detect and cluster AE events from multiple sensors.
-    """
-    
-    def __init__(self, time_window_ms: float = 5.0):
-        """
-        Args:
-            time_window_ms: Time window for event clustering
-        """
-        self.time_window = time_window_ms
-        self.events: List[Dict] = []
-    
-    def cluster_hits(self, hits: List[AEHit]) -> List[List[AEHit]]:
-        """
-        Cluster hits into events.
-        
-        Args:
-            hits: All hits
-        
-        Returns:
-            Event clusters
-        """
-        if not hits:
-            return []
-        
-        sorted_hits = sorted(hits, key=lambda h: h.timestamp)
-        clusters = []
-        current = [sorted_hits[0]]
-        
-        for hit in sorted_hits[1:]:
-            if hit.timestamp - current[-1].timestamp <= self.time_window:
-                current.append(hit)
-            else:
-                clusters.append(current)
-                current = [hit]
-        
-        if current:
-            clusters.append(current)
-        
-        return clusters
-    
-    def event_energy(self, cluster: List[AEHit]) -> float:
-        """
-        Compute total event energy.
-        
-        Args:
-            cluster: Event cluster
-        
-        Returns:
-            Total energy
-        """
-        return sum(h.energy for h in cluster)
-    
-    def event_amplitude(self, cluster: List[AEHit]) -> float:
-        """
-        Compute max event amplitude.
-        
-        Args:
-            cluster: Event cluster
-        
-        Returns:
-            Max amplitude dB
-        """
-        return max(h.amplitude_dB for h in cluster) if cluster else 0.0
-    
-    def event_duration(self, cluster: List[AEHit]) -> float:
-        """
-        Compute event duration.
-        
-        Args:
-            cluster: Event cluster
-        
-        Returns:
-            Duration
-        """
-        if len(cluster) < 2:
-            return 0.0
-        return cluster[-1].timestamp - cluster[0].timestamp
-    
-    def classify_event(self, cluster: List[AEHit]) -> AEEventType:
-        """
-        Classify event type from cluster features.
-        
-        Args:
-            cluster: Event cluster
-        
-        Returns:
-            Event type
-        """
-        if not cluster:
-            return AEEventType.FRICTION
-        
-        avg_rise = sum(h.rise_time_us for h in cluster) / len(cluster)
-        avg_dur = sum(h.duration_us for h in cluster) / len(cluster)
-        max_amp = self.event_amplitude(cluster)
-        
-        if max_amp > 80 and avg_rise < 10:
-            return AEEventType.CRACK_GROWTH
-        elif avg_dur > 1000:
-            return AEEventType.PLASTIC_DEFORMATION
-        elif avg_rise < 50 and max_amp > 60:
-            return AEEventType.DELAMINATION
-        elif max_amp > 70:
-            return AEEventType.FIBER_BREAKAGE
-        return AEEventType.FRICTION
-
-
-class AESourceLocator:
-    """
-    Locate AE source from sensor arrival times.
+    AE source location from multiple sensors.
     """
     
-    def __init__(self, wave_velocity_mm_us: float = 5.0):
+    def __init__(self, velocity_m_s: float = 5000.0):
         """
         Args:
-            wave_velocity_mm_us: Wave velocity mm/us
+            velocity_m_s: Wave velocity in material
         """
-        self.velocity = wave_velocity_mm_us
+        self.velocity = velocity_m_s
     
-    def time_difference_of_arrival(self,
-                                    sensor_positions: List[Tuple[float, float]],
-                                    arrival_times: List[float]) -> Tuple[float, float]:
+    def time_difference_location(self,
+                                 sensor_positions: List[Tuple[float, float]],
+                                 arrival_times_us: List[float]) -> Optional[Tuple[float, float]]:
         """
-        Locate source using TDOA.
+        Locate source from time differences.
         
         Args:
-            sensor_positions: Sensor positions
-            arrival_times: Arrival times
+            sensor_positions: Sensor (x, y) positions
+            arrival_times_us: Arrival times
         
         Returns:
-            Estimated (x, y)
+            Source position or None
         """
-        if len(sensor_positions) < 3 or len(arrival_times) < 3:
-            return (0.0, 0.0)
+        if len(sensor_positions) < 3 or len(arrival_times_us) < 3:
+            return None
         
-        # Use first sensor as reference
+        # Simplified: use first sensor as reference
         ref_pos = sensor_positions[0]
-        ref_time = arrival_times[0]
+        ref_time = arrival_times_us[0]
         
-        # Weighted average based on time difference
-        weights = []
-        for i in range(1, len(sensor_positions)):
-            dt = abs(arrival_times[i] - ref_time)
-            if dt > 0:
-                dist = self.velocity * dt
-                weights.append(1.0 / dist)
-            else:
-                weights.append(0.0)
+        # Estimate source from weighted average
+        x_sum = 0.0
+        y_sum = 0.0
+        weight_sum = 0.0
         
-        if sum(weights) == 0:
-            return ref_pos
+        for i in range(1, min(len(sensor_positions), len(arrival_times_us))):
+            dt = (arrival_times_us[i] - ref_time) * 1e-6
+            distance = self.velocity * abs(dt)
+            
+            dx = sensor_positions[i][0] - ref_pos[0]
+            dy = sensor_positions[i][1] - ref_pos[1]
+            
+            weight = 1.0 / (distance + 1e-6)
+            x_sum += sensor_positions[i][0] * weight
+            y_sum += sensor_positions[i][1] * weight
+            weight_sum += weight
         
-        x = sum(sensor_positions[i][0] * weights[i-1] for i in range(1, len(sensor_positions))) / sum(weights)
-        y = sum(sensor_positions[i][1] * weights[i-1] for i in range(1, len(sensor_positions))) / sum(weights)
-        
-        return (x, y)
+        if weight_sum > 0:
+            return (x_sum / weight_sum, y_sum / weight_sum)
+        return None
     
-    def distance_to_source(self, sensor_pos: Tuple[float, float],
-                          source_pos: Tuple[float, float]) -> float:
+    def delta_t_source(self, sensor1_pos: Tuple[float, float],
+                      sensor2_pos: Tuple[float, float],
+                      delta_t_us: float) -> List[Tuple[float, float]]:
         """
-        Compute distance.
+        Compute hyperbola of possible source locations.
         
         Args:
-            sensor_pos: Sensor position
-            source_pos: Source position
+            sensor1_pos: First sensor
+            sensor2_pos: Second sensor
+            delta_t_us: Time difference
         
         Returns:
-            Distance
+            Sample points on hyperbola
         """
-        return math.sqrt((sensor_pos[0] - source_pos[0])**2 +
-                        (sensor_pos[1] - source_pos[1])**2)
+        dt = delta_t_us * 1e-6
+        distance_diff = self.velocity * dt
+        
+        mid_x = (sensor1_pos[0] + sensor2_pos[0]) / 2.0
+        mid_y = (sensor1_pos[1] + sensor2_pos[1]) / 2.0
+        
+        # Simplified: return midpoint
+        return [(mid_x, mid_y)]
+
+
+class KaiserEffect:
+    """
+    Kaiser effect (felicity ratio) analysis.
+    """
     
-    def expected_arrival(self, sensor_pos: Tuple[float, float],
-                        source_pos: Tuple[float, float],
-                        emission_time: float = 0.0) -> float:
+    def __init__(self):
+        pass
+    
+    def felicity_ratio(self, previous_load_MPa: float,
+                      current_emission_load_MPa: float) -> float:
         """
-        Compute expected arrival time.
+        Compute felicity ratio.
         
         Args:
-            sensor_pos: Sensor position
-            source_pos: Source position
-            emission_time: Emission time
+            previous_load_MPa: Previous maximum load
+            current_emission_load_MPa: Current emission load
         
         Returns:
-            Arrival time
+            Felicity ratio
         """
-        dist = self.distance_to_source(sensor_pos, source_pos)
-        return emission_time + dist / self.velocity
+        if previous_load_MPa <= 0:
+            return 0.0
+        return current_emission_load_MPa / previous_load_MPa
+    
+    def is_kaiser_violation(self, felicity_ratio: float,
+                           threshold: float = 0.95) -> bool:
+        """
+        Check for Kaiser effect violation.
+        
+        Args:
+            felicity_ratio: Felicity ratio
+            threshold: Threshold
+        
+        Returns:
+            Whether violated
+        """
+        return felicity_ratio < threshold
+
+
+class AmplitudeAnalyzer:
+    """
+    AE amplitude analysis.
+    """
+    
+    def __init__(self):
+        pass
+    
+    def b_value(self, amplitudes_dB: List[float],
+               bin_width_dB: float = 1.0) -> float:
+        """
+        Compute b-value from amplitude distribution.
+        
+        Args:
+            amplitudes_dB: Amplitudes
+            bin_width_dB: Bin width
+        
+        Returns:
+            b-value
+        """
+        if not amplitudes_dB:
+            return 0.0
+        
+        # Simplified: slope of log(N) vs amplitude
+        min_amp = min(amplitudes_dB)
+        max_amp = max(amplitudes_dB)
+        num_bins = max(1, int((max_amp - min_amp) / bin_width_dB))
+        
+        bins = [0] * num_bins
+        for amp in amplitudes_dB:
+            idx = min(int((amp - min_amp) / bin_width_dB), num_bins - 1)
+            bins[idx] += 1
+        
+        # Simple slope estimation
+        valid_bins = [(i, math.log10(c + 1)) for i, c in enumerate(bins) if c > 0]
+        if len(valid_bins) < 2:
+            return 0.0
+        
+        n = len(valid_bins)
+        sum_x = sum(v[0] for v in valid_bins)
+        sum_y = sum(v[1] for v in valid_bins)
+        sum_xy = sum(v[0] * v[1] for v in valid_bins)
+        sum_x2 = sum(v[0] ** 2 for v in valid_bins)
+        
+        denominator = n * sum_x2 - sum_x ** 2
+        if denominator == 0:
+            return 0.0
+        
+        slope = (n * sum_xy - sum_x * sum_y) / denominator
+        return -slope
+    
+    def average_signal_level(self, amplitudes_dB: List[float]) -> float:
+        """
+        Compute average signal level.
+        
+        Args:
+            amplitudes_dB: Amplitudes
+        
+        Returns:
+            Average in dB
+        """
+        if not amplitudes_dB:
+            return 0.0
+        return sum(amplitudes_dB) / len(amplitudes_dB)
 
 
 class AcousticEmission:
     """
-    Unified acoustic emission monitoring controller.
+    Unified acoustic emission controller.
     """
     
     def __init__(self):
-        self.sensors: List[AESensor] = []
-        self.detector = AEEventDetector()
-        self.locator = AESourceLocator()
-        self.events: List[Dict] = []
+        self.detector = HitDetector()
+        self.locator = SourceLocator()
+        self.kaiser = KaiserEffect()
+        self.amplitude = AmplitudeAnalyzer()
     
-    def add_sensor(self, position: Tuple[float, float],
-                  threshold_dB: float = 40.0) -> int:
-        """
-        Add sensor.
-        
-        Args:
-            position: Position
-            threshold_dB: Threshold
-        
-        Returns:
-            Sensor ID
-        """
-        sensor_id = len(self.sensors)
-        sensor = AESensor(sensor_id, position, threshold_dB)
-        self.sensors.append(sensor)
-        return sensor_id
-    
-    def monitor(self, signals: List[Dict]):
-        """
-        Process signals from all sensors.
-        
-        Args:
-            signals: List of signal dicts per sensor
-        """
-        all_hits = []
-        for i, sig in enumerate(signals):
-            if i < len(self.sensors):
-                hit = self.sensors[i].detect(
-                    signal_amplitude=sig.get("amplitude", 0.0),
-                    energy=sig.get("energy", 0.0),
-                    duration_us=sig.get("duration", 0.0),
-                    rise_time_us=sig.get("rise_time", 0.0),
-                    counts=sig.get("counts", 0),
-                    timestamp=sig.get("timestamp", 0.0)
-                )
-                if hit:
-                    all_hits.append(hit)
-        
-        # Cluster into events
-        clusters = self.detector.cluster_hits(all_hits)
-        for cluster in clusters:
-            event_type = self.detector.classify_event(cluster)
-            event = {
-                "hits": len(cluster),
-                "energy": self.detector.event_energy(cluster),
-                "amplitude_dB": self.detector.event_amplitude(cluster),
-                "duration_ms": self.detector.event_duration(cluster),
-                "type": event_type.value
-            }
-            self.events.append(event)
-    
-    def locate_source(self, arrival_times: List[float]) -> Tuple[float, float]:
-        """
-        Locate source.
-        
-        Args:
-            arrival_times: Arrival times per sensor
-        
-        Returns:
-            Source position
-        """
-        positions = [s.position for s in self.sensors]
-        return self.locator.time_difference_of_arrival(positions, arrival_times)
-    
-    def emission_summary(self) -> Dict:
-        """Get emission summary."""
-        if not self.events:
-            return {"status": "no_events"}
-        
-        type_counts = {}
-        for e in self.events:
-            t = e["type"]
-            type_counts[t] = type_counts.get(t, 0) + 1
-        
+    def ae_summary(self) -> Dict:
+        """Get summary."""
         return {
-            "total_events": len(self.events),
-            "total_hits": sum(e["hits"] for e in self.events),
-            "max_amplitude_dB": max(e["amplitude_dB"] for e in self.events),
-            "event_types": type_counts
+            "methods": ["hit_detection", "source_location", "kaiser_effect", "amplitude_analysis"],
+            "velocity_m_s": self.locator.velocity
         }

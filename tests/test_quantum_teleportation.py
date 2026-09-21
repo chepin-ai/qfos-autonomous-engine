@@ -5,67 +5,54 @@ Unit tests for quantum teleportation module.
 import unittest
 import sys
 import os
+import math
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from quantum_teleportation import (QubitState, BellStatePreparator,
+from quantum_teleportation import (QubitState, BellStateGenerator,
                                    BellMeasurement,
-                                   ClassicalChannel,
                                    StateReconstructor,
                                    QuantumTeleportation)
 
 
-class TestBellStatePreparator(unittest.TestCase):
-    """Test preparator."""
+class TestBellStateGenerator(unittest.TestCase):
+    """Test Bell generator."""
     
     def setUp(self):
-        self.bsp = BellStatePreparator()
+        self.bsg = BellStateGenerator()
     
-    def test_prepare(self):
-        """Should prepare."""
-        s = self.bsp.prepare("Phi+")
-        self.assertEqual(len(s), 2)
-        print("  [PASS] Prep")
+    def test_phi_plus(self):
+        """Should generate Phi+."""
+        a, b = self.bsg.phi_plus()
+        self.assertAlmostEqual(abs(a.alpha), 1.0 / math.sqrt(2.0), places=5)
+        print("  [PASS] Phi+")
     
-    def test_fidelity(self):
-        """Should compute fidelity."""
-        s = self.bsp.prepare("Phi+")
-        f = self.bsp.fidelity(s, "Phi+")
-        self.assertEqual(f, 1.0)
-        print(f"  [PASS] Fid: {f}")
+    def test_phi_minus(self):
+        """Should generate Phi-."""
+        a, b = self.bsg.phi_minus()
+        self.assertAlmostEqual(abs(a.alpha), 1.0 / math.sqrt(2.0), places=5)
+        print("  [PASS] Phi-")
 
 
 class TestBellMeasurement(unittest.TestCase):
-    """Test measurement."""
+    """Test Bell measurement."""
     
     def setUp(self):
         self.bm = BellMeasurement()
     
     def test_measure(self):
         """Should measure."""
-        q = QubitState(1.0, 0.0)
-        r = self.bm.measure(q, q)
-        self.assertEqual(len(r), 2)
-        print(f"  [PASS] BSM: {r}")
+        q1 = QubitState(1.0, 0.0)
+        q2 = QubitState(1.0, 0.0)
+        m = self.bm.measure(q1, q2)
+        self.assertEqual(len(m), 2)
+        print(f"  [PASS] Meas: {m}")
     
-    def test_corrections(self):
-        """Should convert."""
-        c = self.bm.outcome_to_corrections((1, 0))
-        self.assertEqual(c, (True, False))
-        print(f"  [PASS] Corr: {c}")
-
-
-class TestClassicalChannel(unittest.TestCase):
-    """Test channel."""
-    
-    def setUp(self):
-        self.cc = ClassicalChannel(0.0, 0.0)
-    
-    def test_transmit(self):
-        """Should transmit."""
-        r = self.cc.transmit((0, 1))
-        self.assertEqual(r, (0, 1))
-        print(f"  [PASS] Tx: {r}")
+    def test_correction(self):
+        """Should determine corrections."""
+        gates = self.bm.correction_gates((1, 0))
+        self.assertIn("X", gates)
+        print(f"  [PASS] Corr: {gates}")
 
 
 class TestStateReconstructor(unittest.TestCase):
@@ -74,39 +61,39 @@ class TestStateReconstructor(unittest.TestCase):
     def setUp(self):
         self.sr = StateReconstructor()
     
-    def test_apply(self):
+    def test_apply_correction(self):
         """Should apply corrections."""
-        q = QubitState(1.0, 0.0)
-        r = self.sr.apply_corrections(q, False, False)
-        self.assertEqual(r.alpha, 1.0)
-        print("  [PASS] Appl")
+        s = QubitState(1.0, 0.0)
+        c = self.sr.apply_correction(s, ["X"])
+        self.assertAlmostEqual(c.alpha, 0.0, places=5)
+        print("  [PASS] Corr")
     
     def test_fidelity(self):
         """Should compute fidelity."""
-        q1 = QubitState(1.0, 0.0)
-        q2 = QubitState(1.0, 0.0)
-        f = self.sr.fidelity(q1, q2)
-        self.assertEqual(f, 1.0)
-        print(f"  [PASS] Fid: {f}")
+        s1 = QubitState(1.0, 0.0)
+        s2 = QubitState(1.0, 0.0)
+        f = self.sr.fidelity(s1, s2)
+        self.assertAlmostEqual(f, 1.0, places=5)
+        print(f"  [PASS] Fid: {f:.3f}")
 
 
 class TestQuantumTeleportation(unittest.TestCase):
-    """Test unified controller."""
+    """Test teleportation."""
     
     def setUp(self):
         self.qt = QuantumTeleportation()
     
     def test_teleport(self):
         """Should teleport."""
-        q = QubitState(1.0, 0.0)
-        r, f = self.qt.teleport(q)
-        self.assertIsNotNone(r)
-        print(f"  [PASS] TPort: F={f:.4f}")
+        state = QubitState(1.0 / math.sqrt(2.0), 1.0 / math.sqrt(2.0))
+        result = self.qt.teleport(state)
+        self.assertIn("fidelity", result)
+        print(f"  [PASS] Tel: fid={result['fidelity']:.3f}")
     
     def test_summary(self):
         """Should summarize."""
-        s = self.qt.qteleport_summary()
-        self.assertIn("bell_states", s)
+        s = self.qt.qt_summary()
+        self.assertIn("protocol", s)
         print(f"  [PASS] Sum: {s}")
 
 

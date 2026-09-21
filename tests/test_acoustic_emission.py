@@ -8,134 +8,105 @@ import os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from acoustic_emission import (AEEventType, AEHit, AESensor,
-                               AEEventDetector, AESourceLocator,
+from acoustic_emission import (AEHit, HitDetector,
+                               SourceLocator,
+                               KaiserEffect,
+                               AmplitudeAnalyzer,
                                AcousticEmission)
 
 
-class TestAESensor(unittest.TestCase):
-    """Test AE sensor."""
+class TestHitDetector(unittest.TestCase):
+    """Test detector."""
     
     def setUp(self):
-        self.s = AESensor(0, (0.0, 0.0), 40.0)
+        self.hd = HitDetector(40.0, 50.0)
     
     def test_detect(self):
-        """Should detect above threshold."""
-        h = self.s.detect(50.0, 1.0, 100.0, 5.0, 10, 0.0)
-        self.assertIsNotNone(h)
-        self.assertEqual(h.sensor_id, 0)
-        print("  [PASS] Detect")
+        """Should detect hits."""
+        t = [0.0, 10.0, 20.0, 30.0, 40.0, 50.0]
+        a = [30.0, 35.0, 50.0, 55.0, 35.0, 30.0]
+        hits = self.hd.detect_hits(t, a)
+        self.assertGreater(len(hits), 0)
+        print(f"  [PASS] Hits: {len(hits)}")
     
-    def test_no_detect(self):
-        """Should not detect below threshold."""
-        h = self.s.detect(30.0, 1.0, 100.0, 5.0, 10, 0.0)
-        self.assertIsNone(h)
-        print("  [PASS] NoDetect")
-    
-    def test_hit_rate(self):
-        """Should compute hit rate."""
-        self.s.detect(50.0, 1.0, 100.0, 5.0, 10, 0.0)
-        self.s.detect(55.0, 1.5, 120.0, 6.0, 15, 1.0)
-        r = self.s.hit_rate(2.0)
-        self.assertGreaterEqual(r, 0.0)
-        print(f"  [PASS] Rate: {r:.1f}")
+    def test_count_rate(self):
+        """Should compute rate."""
+        hits = [AEHit(0.0, 60.0, 100.0, 10.0, 1.0, 5)]
+        r = self.hd.count_rate(hits, 1.0)
+        self.assertEqual(r, 1.0)
+        print(f"  [PASS] Rate: {r:.1f} hits/s")
 
 
-class TestAEEventDetector(unittest.TestCase):
-    """Test event detector."""
+class TestSourceLocator(unittest.TestCase):
+    """Test locator."""
     
     def setUp(self):
-        self.ed = AEEventDetector()
+        self.sl = SourceLocator(5000.0)
     
-    def test_cluster(self):
-        """Should cluster hits."""
-        hits = [
-            AEHit(0, 50.0, 1.0, 100.0, 5.0, 10, 0.0),
-            AEHit(1, 55.0, 1.2, 110.0, 6.0, 12, 2.0),
-            AEHit(2, 60.0, 1.5, 120.0, 7.0, 15, 10.0)
-        ]
-        clusters = self.ed.cluster_hits(hits)
-        self.assertGreater(len(clusters), 0)
-        print(f"  [PASS] Clusters: {len(clusters)}")
-    
-    def test_event_energy(self):
-        """Should compute energy."""
-        cluster = [AEHit(0, 50.0, 1.0, 100.0, 5.0, 10, 0.0),
-                   AEHit(1, 55.0, 2.0, 110.0, 6.0, 12, 2.0)]
-        e = self.ed.event_energy(cluster)
-        self.assertEqual(e, 3.0)
-        print(f"  [PASS] E: {e}")
-    
-    def test_classify(self):
-        """Should classify event."""
-        cluster = [AEHit(0, 85.0, 1.0, 50.0, 5.0, 10, 0.0)]
-        t = self.ed.classify_event(cluster)
-        self.assertIsInstance(t, AEEventType)
-        print(f"  [PASS] Type: {t.value}")
-
-
-class TestAESourceLocator(unittest.TestCase):
-    """Test source locator."""
-    
-    def setUp(self):
-        self.sl = AESourceLocator()
-    
-    def test_tdoa(self):
+    def test_locate(self):
         """Should locate source."""
-        pos = [(0.0, 0.0), (100.0, 0.0), (0.0, 100.0)]
-        times = [0.0, 20.0, 20.0]
-        src = self.sl.time_difference_of_arrival(pos, times)
+        sensors = [(0.0, 0.0), (1.0, 0.0), (0.5, 1.0)]
+        times = [0.0, 200.0, 223.6]
+        src = self.sl.time_difference_location(sensors, times)
         self.assertIsNotNone(src)
-        print(f"  [PASS] Src: {src}")
+        print(f"  [PASS] Src: ({src[0]:.2f}, {src[1]:.2f})")
     
-    def test_distance(self):
-        """Should compute distance."""
-        d = self.sl.distance_to_source((0.0, 0.0), (30.0, 40.0))
-        self.assertAlmostEqual(d, 50.0)
-        print(f"  [PASS] Dist: {d}")
+    def test_hyperbola(self):
+        """Should compute hyperbola."""
+        pts = self.sl.delta_t_source((0.0, 0.0), (1.0, 0.0), 100.0)
+        self.assertGreater(len(pts), 0)
+        print(f"  [PASS] Hyp: {len(pts)} pts")
+
+
+class TestKaiserEffect(unittest.TestCase):
+    """Test Kaiser."""
     
-    def test_arrival(self):
-        """Should compute arrival."""
-        t = self.sl.expected_arrival((0.0, 0.0), (50.0, 0.0), 0.0)
-        self.assertEqual(t, 10.0)
-        print(f"  [PASS] Arr: {t}")
+    def setUp(self):
+        self.ke = KaiserEffect()
+    
+    def test_felicity(self):
+        """Should compute ratio."""
+        fr = self.ke.felicity_ratio(100.0, 90.0)
+        self.assertAlmostEqual(fr, 0.9, delta=0.01)
+        print(f"  [PASS] FR: {fr:.2f}")
+    
+    def test_violation(self):
+        """Should detect violation."""
+        self.assertTrue(self.ke.is_kaiser_violation(0.9))
+        self.assertFalse(self.ke.is_kaiser_violation(0.97))
+        print("  [PASS] Viol")
+
+
+class TestAmplitudeAnalyzer(unittest.TestCase):
+    """Test amplitude."""
+    
+    def setUp(self):
+        self.aa = AmplitudeAnalyzer()
+    
+    def test_b_value(self):
+        """Should compute b-value."""
+        amps = [40.0, 45.0, 50.0, 55.0, 60.0]
+        b = self.aa.b_value(amps)
+        self.assertIsInstance(b, float)
+        print(f"  [PASS] b: {b:.2f}")
+    
+    def test_asl(self):
+        """Should compute ASL."""
+        asl = self.aa.average_signal_level([40.0, 50.0, 60.0])
+        self.assertEqual(asl, 50.0)
+        print(f"  [PASS] ASL: {asl:.1f} dB")
 
 
 class TestAcousticEmission(unittest.TestCase):
-    """Test unified AE."""
+    """Test unified controller."""
     
     def setUp(self):
         self.ae = AcousticEmission()
-        self.ae.add_sensor((0.0, 0.0), 40.0)
-        self.ae.add_sensor((100.0, 0.0), 40.0)
-    
-    def test_add_sensor(self):
-        """Should add sensor."""
-        self.assertEqual(len(self.ae.sensors), 2)
-        print("  [PASS] AddSens")
-    
-    def test_monitor(self):
-        """Should monitor."""
-        signals = [
-            {"amplitude": 50.0, "energy": 1.0, "duration": 100.0, "rise_time": 5.0, "counts": 10, "timestamp": 0.0},
-            {"amplitude": 55.0, "energy": 1.2, "duration": 110.0, "rise_time": 6.0, "counts": 12, "timestamp": 2.0}
-        ]
-        self.ae.monitor(signals)
-        self.assertGreater(len(self.ae.events), 0)
-        print(f"  [PASS] Events: {len(self.ae.events)}")
-    
-    def test_locate(self):
-        """Should locate."""
-        src = self.ae.locate_source([0.0, 20.0, 20.0])
-        self.assertIsNotNone(src)
-        print(f"  [PASS] Locate: {src}")
     
     def test_summary(self):
         """Should summarize."""
-        signals = [{"amplitude": 50.0, "energy": 1.0, "duration": 100.0, "rise_time": 5.0, "counts": 10, "timestamp": 0.0}]
-        self.ae.monitor(signals)
-        s = self.ae.emission_summary()
-        self.assertIn("total_events", s)
+        s = self.ae.ae_summary()
+        self.assertIn("methods", s)
         print(f"  [PASS] Sum: {s}")
 
 
