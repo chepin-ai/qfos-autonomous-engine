@@ -1,7 +1,7 @@
 """
 Rheology Module
-Viscosity measurement, shear stress analysis, elastic modulus,
-loss modulus, and creep compliance for autonomous NDT.
+Viscosity, shear stress, creep compliance,
+stress relaxation, and viscoelastic models for autonomous materials science.
 """
 
 import math
@@ -10,277 +10,199 @@ from dataclasses import dataclass
 
 
 @dataclass
-class RheologyPoint:
-    """Rheology data point."""
-    shear_rate_1_s: float
+class ShearPoint:
+    """Shear rheology data point."""
+    shear_rate_s: float
     shear_stress_Pa: float
-    time_s: float
+    viscosity_Pa_s: float
 
 
-class ViscosityCalculator:
+class NewtonianFluid:
     """
-    Calculate viscosity from rheological data.
+    Newtonian fluid model.
     """
     
-    def __init__(self):
-        pass
-    
-    def newtonian_viscosity(self, shear_stress_Pa: float,
-                           shear_rate_1_s: float) -> float:
+    def __init__(self, viscosity_Pa_s: float = 1.0):
         """
-        Compute Newtonian viscosity.
+        Args:
+            viscosity_Pa_s: Dynamic viscosity
+        """
+        self.viscosity = viscosity_Pa_s
+    
+    def shear_stress(self, shear_rate_s: float) -> float:
+        """
+        Compute shear stress.
         
         Args:
-            shear_stress_Pa: Shear stress
-            shear_rate_1_s: Shear rate
+            shear_rate_s: Shear rate
         
         Returns:
-            Viscosity in Pa.s
+            Shear stress in Pa
         """
-        if shear_rate_1_s <= 0:
-            return 0.0
-        return shear_stress_Pa / shear_rate_1_s
+        return self.viscosity * shear_rate_s
     
-    def apparent_viscosity(self, points: List[RheologyPoint]) -> float:
+    def reynolds_number(self, density_kg_m3: float,
+                       velocity_m_s: float,
+                       characteristic_length_m: float) -> float:
+        """
+        Compute Reynolds number.
+        
+        Args:
+            density_kg_m3: Density
+            velocity_m_s: Velocity
+            characteristic_length_m: Characteristic length
+        
+        Returns:
+            Reynolds number
+        """
+        if self.viscosity <= 0:
+            return 0.0
+        return (density_kg_m3 * velocity_m_s * characteristic_length_m) / self.viscosity
+
+
+class PowerLawFluid:
+    """
+    Power-law (Ostwald-de Waele) fluid model.
+    """
+    
+    def __init__(self, consistency_index_Pa_s_n: float = 1.0,
+                 flow_index: float = 1.0):
+        """
+        Args:
+            consistency_index_Pa_s_n: Consistency index K
+            flow_index: Flow behavior index n
+        """
+        self.K = consistency_index_Pa_s_n
+        self.n = flow_index
+    
+    def shear_stress(self, shear_rate_s: float) -> float:
+        """
+        Compute shear stress.
+        
+        Args:
+            shear_rate_s: Shear rate
+        
+        Returns:
+            Shear stress in Pa
+        """
+        return self.K * (abs(shear_rate_s) ** self.n)
+    
+    def apparent_viscosity(self, shear_rate_s: float) -> float:
         """
         Compute apparent viscosity.
         
         Args:
-            points: Data points
+            shear_rate_s: Shear rate
         
         Returns:
             Apparent viscosity in Pa.s
         """
-        if not points:
+        if shear_rate_s == 0:
+            return float('inf') if self.n < 1 else self.K
+        return self.K * (abs(shear_rate_s) ** (self.n - 1.0))
+
+
+class MaxwellModel:
+    """
+    Maxwell viscoelastic model.
+    """
+    
+    def __init__(self, elastic_modulus_Pa: float = 1e6,
+                 viscosity_Pa_s: float = 1e3):
+        """
+        Args:
+            elastic_modulus_Pa: Elastic modulus
+            viscosity_Pa_s: Viscosity
+        """
+        self.E = elastic_modulus_Pa
+        self.eta = viscosity_Pa_s
+    
+    def relaxation_time(self) -> float:
+        """
+        Compute relaxation time.
+        
+        Returns:
+            Relaxation time in s
+        """
+        if self.E <= 0:
             return 0.0
-        
-        total_visc = 0.0
-        count = 0
-        for p in points:
-            if p.shear_rate_1_s > 0:
-                total_visc += p.shear_stress_Pa / p.shear_rate_1_s
-                count += 1
-        
-        return total_visc / count if count > 0 else 0.0
+        return self.eta / self.E
     
-    def power_law_viscosity(self, consistency_K: float,
-                           power_index_n: float,
-                           shear_rate_1_s: float) -> float:
+    def stress_relaxation(self, initial_stress_Pa: float,
+                         time_s: float) -> float:
         """
-        Compute power-law viscosity.
+        Compute stress at time t after step strain.
         
         Args:
-            consistency_K: Consistency index
-            power_index_n: Power law index
-            shear_rate_1_s: Shear rate
+            initial_stress_Pa: Initial stress
+            time_s: Time
         
         Returns:
-            Viscosity in Pa.s
+            Stress in Pa
         """
-        if shear_rate_1_s <= 0:
-            return 0.0
-        return consistency_K * (shear_rate_1_s ** (power_index_n - 1.0))
-
-
-class ShearStressAnalyzer:
-    """
-    Analyze shear stress behavior.
-    """
+        tau = self.relaxation_time()
+        if tau <= 0:
+            return initial_stress_Pa
+        return initial_stress_Pa * math.exp(-time_s / tau)
     
-    def __init__(self):
-        pass
-    
-    def yield_stress(self, points: List[RheologyPoint]) -> float:
+    def creep_compliance(self, time_s: float) -> float:
         """
-        Estimate yield stress from data.
+        Compute creep compliance J(t).
         
         Args:
-            points: Data points
-        
-        Returns:
-            Yield stress in Pa
-        """
-        if not points:
-            return 0.0
-        # Extrapolate to zero shear rate
-        stresses = [p.shear_stress_Pa for p in points
-                   if p.shear_rate_1_s > 0]
-        return min(stresses) if stresses else 0.0
-    
-    def bingham_model(self, yield_stress_Pa: float,
-                     plastic_viscosity_Pa_s: float,
-                     shear_rate_1_s: float) -> float:
-        """
-        Bingham plastic model.
-        
-        Args:
-            yield_stress_Pa: Yield stress
-            plastic_viscosity_Pa_s: Plastic viscosity
-            shear_rate_1_s: Shear rate
-        
-        Returns:
-            Shear stress in Pa
-        """
-        return yield_stress_Pa + plastic_viscosity_Pa_s * shear_rate_1_s
-    
-    def casson_model(self, yield_stress_Pa: float,
-                    casson_viscosity_Pa_s: float,
-                    shear_rate_1_s: float) -> float:
-        """
-        Casson model.
-        
-        Args:
-            yield_stress_Pa: Yield stress
-            casson_viscosity_Pa_s: Casson viscosity
-            shear_rate_1_s: Shear rate
-        
-        Returns:
-            Shear stress in Pa
-        """
-        return (math.sqrt(yield_stress_Pa) +
-                math.sqrt(casson_viscosity_Pa_s * shear_rate_1_s)) ** 2
-
-
-class ModulusAnalyzer:
-    """
-    Analyze elastic and loss moduli.
-    """
-    
-    def __init__(self):
-        pass
-    
-    def storage_modulus(self, stress_amplitude_Pa: float,
-                       strain_amplitude: float,
-                       phase_angle_deg: float) -> float:
-        """
-        Compute storage modulus G'.
-        
-        Args:
-            stress_amplitude_Pa: Stress amplitude
-            strain_amplitude: Strain amplitude
-            phase_angle_deg: Phase angle
-        
-        Returns:
-            G' in Pa
-        """
-        if strain_amplitude <= 0:
-            return 0.0
-        ratio = stress_amplitude_Pa / strain_amplitude
-        return ratio * math.cos(math.radians(phase_angle_deg))
-    
-    def loss_modulus(self, stress_amplitude_Pa: float,
-                    strain_amplitude: float,
-                    phase_angle_deg: float) -> float:
-        """
-        Compute loss modulus G''.
-        
-        Args:
-            stress_amplitude_Pa: Stress amplitude
-            strain_amplitude: Strain amplitude
-            phase_angle_deg: Phase angle
-        
-        Returns:
-            G'' in Pa
-        """
-        if strain_amplitude <= 0:
-            return 0.0
-        ratio = stress_amplitude_Pa / strain_amplitude
-        return ratio * math.sin(math.radians(phase_angle_deg))
-    
-    def tan_delta(self, storage_modulus_Pa: float,
-                 loss_modulus_Pa: float) -> float:
-        """
-        Compute tan(delta).
-        
-        Args:
-            storage_modulus_Pa: G'
-            loss_modulus_Pa: G''
-        
-        Returns:
-            tan(delta)
-        """
-        if abs(storage_modulus_Pa) < 1e-10:
-            return float('inf')
-        return loss_modulus_Pa / storage_modulus_Pa
-    
-    def complex_modulus(self, storage_modulus_Pa: float,
-                       loss_modulus_Pa: float) -> float:
-        """
-        Compute complex modulus.
-        
-        Args:
-            storage_modulus_Pa: G'
-            loss_modulus_Pa: G''
-        
-        Returns:
-            |G*| in Pa
-        """
-        return math.sqrt(storage_modulus_Pa**2 + loss_modulus_Pa**2)
-
-
-class CreepCompliance:
-    """
-    Creep compliance analysis.
-    """
-    
-    def __init__(self):
-        pass
-    
-    def compliance(self, strain: float,
-                  applied_stress_Pa: float) -> float:
-        """
-        Compute compliance.
-        
-        Args:
-            strain: Strain
-            applied_stress_Pa: Applied stress
+            time_s: Time
         
         Returns:
             Compliance in 1/Pa
         """
-        if applied_stress_Pa <= 0:
+        if self.E <= 0:
             return 0.0
-        return strain / applied_stress_Pa
+        tau = self.relaxation_time()
+        return 1.0 / self.E + time_s / self.eta if self.eta > 0 else 1.0 / self.E
+
+
+class KelvinVoigtModel:
+    """
+    Kelvin-Voigt viscoelastic model.
+    """
     
-    def maxwell_compliance(self, time_s: float,
-                          elastic_modulus_Pa: float,
-                          viscosity_Pa_s: float) -> float:
+    def __init__(self, elastic_modulus_Pa: float = 1e6,
+                 viscosity_Pa_s: float = 1e3):
         """
-        Maxwell model compliance.
-        
         Args:
-            time_s: Time
             elastic_modulus_Pa: Elastic modulus
             viscosity_Pa_s: Viscosity
+        """
+        self.E = elastic_modulus_Pa
+        self.eta = viscosity_Pa_s
+    
+    def retardation_time(self) -> float:
+        """
+        Compute retardation time.
         
         Returns:
-            Compliance
+            Retardation time in s
         """
-        if elastic_modulus_Pa <= 0 or viscosity_Pa_s <= 0:
+        if self.E <= 0:
             return 0.0
-        return 1.0 / elastic_modulus_Pa + time_s / viscosity_Pa_s
+        return self.eta / self.E
     
-    def kelvin_voigt_compliance(self, time_s: float,
-                               elastic_modulus_Pa: float,
-                               viscosity_Pa_s: float,
-                               applied_stress_Pa: float) -> float:
+    def creep_strain(self, applied_stress_Pa: float,
+                    time_s: float) -> float:
         """
-        Kelvin-Voigt model compliance.
+        Compute creep strain.
         
         Args:
-            time_s: Time
-            elastic_modulus_Pa: Elastic modulus
-            viscosity_Pa_s: Viscosity
             applied_stress_Pa: Applied stress
+            time_s: Time
         
         Returns:
-            Compliance
+            Strain
         """
-        if elastic_modulus_Pa <= 0 or viscosity_Pa_s <= 0:
+        if self.E <= 0:
             return 0.0
-        tau = viscosity_Pa_s / elastic_modulus_Pa
-        return (applied_stress_Pa / elastic_modulus_Pa) * \
-               (1.0 - math.exp(-time_s / tau))
+        tau = self.retardation_time()
+        return (applied_stress_Pa / self.E) * (1.0 - math.exp(-time_s / tau))
 
 
 class Rheology:
@@ -289,54 +211,14 @@ class Rheology:
     """
     
     def __init__(self):
-        self.viscosity = ViscosityCalculator()
-        self.shear = ShearStressAnalyzer()
-        self.modulus = ModulusAnalyzer()
-        self.creep = CreepCompliance()
-        self.points: List[RheologyPoint] = []
+        self.newtonian = NewtonianFluid()
+        self.power_law = PowerLawFluid()
+        self.maxwell = MaxwellModel()
+        self.kelvin_voigt = KelvinVoigtModel()
     
-    def add_point(self, point: RheologyPoint):
-        """
-        Add data point.
-        
-        Args:
-            point: Point
-        """
-        self.points.append(point)
-    
-    def analyze(self) -> Dict:
-        """
-        Analyze rheology data.
-        
-        Returns:
-            Results
-        """
-        if not self.points:
-            return {}
-        
-        app_visc = self.viscosity.apparent_viscosity(self.points)
-        yield_stress = self.shear.yield_stress(self.points)
-        
-        # Compute moduli from last point
-        last = self.points[-1]
-        g_prime = self.modulus.storage_modulus(
-            last.shear_stress_Pa, 0.1, 45.0)
-        g_double = self.modulus.loss_modulus(
-            last.shear_stress_Pa, 0.1, 45.0)
-        tan_d = self.modulus.tan_delta(g_prime, g_double)
-        
-        return {
-            "apparent_viscosity_Pa_s": app_visc,
-            "yield_stress_Pa": yield_stress,
-            "storage_modulus_Pa": g_prime,
-            "loss_modulus_Pa": g_double,
-            "tan_delta": tan_d,
-            "points": len(self.points)
-        }
-    
-    def rheo_summary(self) -> Dict:
+    def rheology_summary(self) -> Dict:
         """Get summary."""
         return {
-            "points": len(self.points),
-            "methods": ["viscosity", "shear", "modulus", "creep"]
+            "models": ["newtonian", "power_law", "maxwell", "kelvin_voigt"],
+            "properties": ["viscosity", "shear_stress", "creep", "relaxation"]
         }

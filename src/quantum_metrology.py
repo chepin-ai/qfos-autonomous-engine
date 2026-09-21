@@ -1,8 +1,7 @@
 """
 Quantum Metrology Module
-Quantum-enhanced parameter estimation, phase sensing, Ramsey
-interferometry, and quantum Fisher information for autonomous
-high-precision measurement.
+Phase estimation, quantum sensing,
+Fisher information, quantum Cramer-Rao bound, and parameter estimation for autonomous quantum computing.
 """
 
 import math
@@ -10,139 +9,72 @@ from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass
 
 
-class QuantumPhaseSensor:
-    """
-    Quantum phase estimation via interferometry.
-    """
-    
-    def __init__(self, num_qubits: int = 2):
-        """
-        Args:
-            num_qubits: Qubits
-        """
-        self.n = num_qubits
-    
-    def prepare_ghz(self) -> List[complex]:
-        """
-        Prepare GHZ state.
-        
-        Returns:
-            GHZ state
-        """
-        dim = 2 ** self.n
-        state = [complex(0.0, 0.0)] * dim
-        state[0] = complex(1.0 / math.sqrt(2), 0.0)
-        state[dim - 1] = complex(1.0 / math.sqrt(2), 0.0)
-        return state
-    
-    def apply_phase(self, state: List[complex],
-                   phi: float) -> List[complex]:
-        """
-        Apply phase to state.
-        
-        Args:
-            state: State
-            phi: Phase
-        
-        Returns:
-            State with phase
-        """
-        return [z * complex(math.cos(phi), math.sin(phi)) for z in state]
-    
-    def measure(self, state: List[complex]) -> float:
-        """
-        Measure expectation of Pauli-X.
-        
-        Args:
-            state: State
-        
-        Returns:
-            Expectation value
-        """
-        # <X> = Re(<0|X|psi>) simplified
-        return sum(abs(z) ** 2 * (1 if i % 2 == 0 else -1)
-                   for i, z in enumerate(state))
-    
-    def estimate_phase(self, state: List[complex]) -> float:
-        """
-        Estimate phase from measurement.
-        
-        Args:
-            state: State
-        
-        Returns:
-            Estimated phase
-        """
-        expectation = self.measure(state)
-        # cos(n*phi) ~ expectation
-        if abs(expectation) > 1.0:
-            expectation = 1.0 if expectation > 0 else -1.0
-        return math.acos(expectation) / self.n
+@dataclass
+class EstimationResult:
+    """Parameter estimation result."""
+    estimated_value: float
+    uncertainty: float
+    fisher_information: float
 
 
-class RamseyInterferometer:
+class PhaseEstimator:
     """
-    Ramsey interferometry for frequency estimation.
+    Quantum phase estimation.
     """
     
-    def __init__(self):
-        self.pi_half_pulse = math.pi / 2
-        self.wait_time = 1.0
-    
-    def ramsey_sequence(self, detuning: float,
-                       wait_time: float = 1.0) -> float:
+    def __init__(self, num_qubits: int = 3):
         """
-        Simulate Ramsey sequence.
+        Args:
+            num_qubits: Number of qubits in estimation register
+        """
+        self.num_qubits = num_qubits
+    
+    def estimate_phase(self, true_phase: float,
+                      num_measurements: int = 100) -> EstimationResult:
+        """
+        Estimate phase using quantum measurements.
         
         Args:
-            detuning: Frequency detuning
-            wait_time: Wait time
+            true_phase: True phase value
+            num_measurements: Number of measurements
         
         Returns:
-            Probability of |1>
+            Estimation result
         """
-        # P(1) = 0.5 * (1 - cos(detuning * wait_time))
-        return 0.5 * (1.0 - math.cos(detuning * wait_time))
+        # Simulate phase estimation
+        # Measurement probabilities: P(0) = cos^2(phase/2), P(1) = sin^2(phase/2)
+        p0 = math.cos(true_phase / 2.0) ** 2
+        
+        counts_0 = sum(1 for _ in range(num_measurements)
+                      if __import__('random').random() < p0)
+        p0_est = counts_0 / num_measurements
+        
+        # Estimate phase from p0
+        p0_est = max(0.001, min(0.999, p0_est))
+        estimated_phase = 2.0 * math.acos(math.sqrt(p0_est))
+        
+        # Fisher information for phase estimation
+        FI = num_measurements  # Simplified: scales with N
+        
+        # Uncertainty from quantum Cramer-Rao bound
+        uncertainty = 1.0 / math.sqrt(FI)
+        
+        return EstimationResult(estimated_phase, uncertainty, FI)
     
-    def estimate_detuning(self, probability: float,
-                         wait_time: float = 1.0) -> float:
+    def precision_scaling(self, num_qubits: int) -> float:
         """
-        Estimate detuning.
+        Compute Heisenberg scaling precision.
         
         Args:
-            probability: P(1)
-            wait_time: Wait time
+            num_qubits: Number of qubits
         
         Returns:
-            Detuning
+            Precision (1/N)
         """
-        if wait_time <= 0:
-            return 0.0
-        
-        cos_term = 1.0 - 2.0 * probability
-        if abs(cos_term) > 1.0:
-            cos_term = 1.0 if cos_term > 0 else -1.0
-        
-        return math.acos(cos_term) / wait_time
-    
-    def sensitivity(self, wait_time: float,
-                   num_measurements: int = 1) -> float:
-        """
-        Compute sensitivity.
-        
-        Args:
-            wait_time: Wait time
-            num_measurements: Measurements
-        
-        Returns:
-            Sensitivity
-        """
-        if wait_time <= 0 or num_measurements <= 0:
-            return float('inf')
-        return 1.0 / (wait_time * math.sqrt(num_measurements))
+        return 1.0 / (2.0 ** num_qubits)
 
 
-class QuantumFisherInfo:
+class QuantumFisherInformation:
     """
     Quantum Fisher information calculations.
     """
@@ -150,62 +82,109 @@ class QuantumFisherInfo:
     def __init__(self):
         pass
     
-    def pure_state_qfi(self, state_derivative: List[complex],
+    def qfi_pure_state(self, state_derivative: List[complex],
                       state: List[complex]) -> float:
         """
-        QFI for pure state.
+        Compute QFI for pure states.
         
         Args:
             state_derivative: d|psi>/dtheta
             state: |psi>
         
         Returns:
-            QFI
+            Quantum Fisher information
         """
-        # F = 4 * (<dpsi|dpsi> - |<dpsi|psi>|^2)
-        dpsi_dpsi = sum(abs(z)**2 for z in state_derivative)
-        dpsi_psi = sum(z1.conjugate() * z2
-                       for z1, z2 in zip(state_derivative, state))
+        # F_Q = 4 * (<dpsi|dpsi> - |<dpsi|psi>|^2)
+        norm_dpsi = sum(abs(d) ** 2 for d in state_derivative)
+        overlap = sum((d.conjugate() * s).real
+                     for d, s in zip(state_derivative, state))
         
-        return 4.0 * (dpsi_dpsi - abs(dpsi_psi)**2)
+        return 4.0 * (norm_dpsi - overlap ** 2)
     
-    def ghz_qfi(self, num_qubits: int) -> float:
+    def qfi_ghz_state(self, num_qubits: int) -> float:
         """
         QFI for GHZ state.
         
         Args:
-            num_qubits: Qubits
+            num_qubits: Number of qubits
         
         Returns:
             QFI
         """
         return float(num_qubits ** 2)
     
-    def coherent_state_qfi(self, num_qubits: int) -> float:
+    def qfi_product_state(self, num_qubits: int) -> float:
         """
-        QFI for coherent (separable) state.
+        QFI for product state (standard quantum limit).
         
         Args:
-            num_qubits: Qubits
+            num_qubits: Number of qubits
         
         Returns:
             QFI
         """
         return float(num_qubits)
+
+
+class QuantumSensor:
+    """
+    Quantum sensing and parameter estimation.
+    """
     
-    def quantum_advantage(self, num_qubits: int) -> float:
+    def __init__(self):
+        pass
+    
+    def frequency_estimation(self, measurement_time_s: float,
+                            signal_to_noise_dB: float) -> float:
         """
-        Compute quantum advantage.
+        Estimate frequency resolution.
         
         Args:
-            num_qubits: Qubits
+            measurement_time_s: Measurement time
+            signal_to_noise_dB: SNR in dB
         
         Returns:
-            Advantage ratio
+            Frequency uncertainty in Hz
         """
-        if num_qubits <= 0:
-            return 1.0
-        return self.ghz_qfi(num_qubits) / self.coherent_state_qfi(num_qubits)
+        if measurement_time_s <= 0:
+            return float('inf')
+        snr_linear = 10.0 ** (signal_to_noise_dB / 10.0)
+        return 1.0 / (2.0 * math.pi * measurement_time_s * math.sqrt(snr_linear))
+    
+    def magnetic_field_sensitivity(self, gyromagnetic_ratio_MHz_T: float,
+                                  coherence_time_s: float,
+                                  num_ions: int = 1) -> float:
+        """
+        Compute magnetic field sensitivity.
+        
+        Args:
+            gyromagnetic_ratio_MHz_T: Gyromagnetic ratio
+            coherence_time_s: Coherence time
+            num_ions: Number of ions
+        
+        Returns:
+            Sensitivity in T/sqrt(Hz)
+        """
+        if coherence_time_s <= 0 or gyromagnetic_ratio_MHz_T <= 0:
+            return float('inf')
+        gamma = gyromagnetic_ratio_MHz_T * 2.0 * math.pi * 1e6
+        return 1.0 / (gamma * math.sqrt(num_ions * coherence_time_s))
+    
+    def gravimetry_sensitivity(self, atom_interrogation_time_s: float,
+                              wavevector_m: float = 1.0e10) -> float:
+        """
+        Atom interferometer gravity sensitivity.
+        
+        Args:
+            atom_interrogation_time_s: Interrogation time
+            wavevector_m: Wavevector
+        
+        Returns:
+            Sensitivity in m/s^2/sqrt(Hz)
+        """
+        if atom_interrogation_time_s <= 0:
+            return float('inf')
+        return 1.0 / (wavevector_m * atom_interrogation_time_s ** 2)
 
 
 class QuantumMetrology:
@@ -214,88 +193,14 @@ class QuantumMetrology:
     """
     
     def __init__(self):
-        self.phase_sensor: Optional[QuantumPhaseSensor] = None
-        self.ramsey = RamseyInterferometer()
-        self.qfi = QuantumFisherInfo()
-        self.results: List[Dict] = []
-    
-    def setup_phase_sensor(self, num_qubits: int = 2):
-        """
-        Setup phase sensor.
-        
-        Args:
-            num_qubits: Qubits
-        """
-        self.phase_sensor = QuantumPhaseSensor(num_qubits)
-    
-    def measure_phase(self, true_phase: float) -> Dict:
-        """
-        Measure phase.
-        
-        Args:
-            true_phase: True phase
-        
-        Returns:
-            Result
-        """
-        if self.phase_sensor is None:
-            self.setup_phase_sensor()
-        
-        state = self.phase_sensor.prepare_ghz()
-        state = self.phase_sensor.apply_phase(state, true_phase)
-        estimated = self.phase_sensor.estimate_phase(state)
-        
-        result = {
-            "true_phase": true_phase,
-            "estimated_phase": estimated,
-            "error": abs(estimated - true_phase)
-        }
-        self.results.append(result)
-        return result
-    
-    def ramsey_measurement(self, detuning: float,
-                          wait_time: float = 1.0) -> Dict:
-        """
-        Perform Ramsey measurement.
-        
-        Args:
-            detuning: Detuning
-            wait_time: Wait time
-        
-        Returns:
-            Result
-        """
-        prob = self.ramsey.ramsey_sequence(detuning, wait_time)
-        estimated = self.ramsey.estimate_detuning(prob, wait_time)
-        sensitivity = self.ramsey.sensitivity(wait_time)
-        
-        return {
-            "detuning": detuning,
-            "probability": prob,
-            "estimated_detuning": estimated,
-            "sensitivity": sensitivity
-        }
-    
-    def compute_qfi(self, num_qubits: int) -> Dict:
-        """
-        Compute QFI metrics.
-        
-        Args:
-            num_qubits: Qubits
-        
-        Returns:
-            Metrics
-        """
-        return {
-            "ghz_qfi": self.qfi.ghz_qfi(num_qubits),
-            "coherent_qfi": self.qfi.coherent_state_qfi(num_qubits),
-            "advantage": self.qfi.quantum_advantage(num_qubits)
-        }
+        self.phase = PhaseEstimator()
+        self.qfi = QuantumFisherInformation()
+        self.sensor = QuantumSensor()
     
     def metrology_summary(self) -> Dict:
         """Get summary."""
         return {
-            "measurements": len(self.results),
-            "avg_error": sum(r["error"] for r in self.results) / max(len(self.results), 1),
-            "qfi_available": True
+            "methods": ["phase_estimation", "fisher_information", "quantum_sensing"],
+            "sensors": ["frequency", "magnetic_field", "gravimetry"],
+            "scaling": ["heisenberg", "standard_quantum_limit"]
         }

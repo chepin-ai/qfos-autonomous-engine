@@ -8,119 +8,94 @@ import os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from rheology import (RheologyPoint, ViscosityCalculator,
-                      ShearStressAnalyzer,
-                      ModulusAnalyzer,
-                      CreepCompliance,
+from rheology import (ShearPoint, NewtonianFluid,
+                      PowerLawFluid,
+                      MaxwellModel,
+                      KelvinVoigtModel,
                       Rheology)
 
 
-class TestViscosityCalculator(unittest.TestCase):
-    """Test viscosity."""
+class TestNewtonianFluid(unittest.TestCase):
+    """Test Newtonian."""
     
     def setUp(self):
-        self.vc = ViscosityCalculator()
+        self.fluid = NewtonianFluid(0.001)  # Water-like
     
-    def test_newtonian(self):
-        """Should compute Newtonian."""
-        v = self.vc.newtonian_viscosity(10.0, 5.0)
-        self.assertEqual(v, 2.0)
-        print(f"  [PASS] Newt: {v} Pa.s")
+    def test_shear_stress(self):
+        """Should compute stress."""
+        tau = self.fluid.shear_stress(1000.0)
+        self.assertAlmostEqual(tau, 1.0, delta=0.01)
+        print(f"  [PASS] Tau: {tau:.3f} Pa")
     
-    def test_apparent(self):
-        """Should compute apparent."""
-        pts = [RheologyPoint(1.0, 10.0, 0.0), RheologyPoint(2.0, 20.0, 1.0)]
-        v = self.vc.apparent_viscosity(pts)
-        self.assertEqual(v, 10.0)
-        print(f"  [PASS] App: {v} Pa.s")
-    
-    def test_power_law(self):
-        """Should compute power-law."""
-        v = self.vc.power_law_viscosity(1.0, 0.5, 10.0)
-        self.assertGreater(v, 0)
-        print(f"  [PASS] PL: {v:.4f} Pa.s")
+    def test_reynolds(self):
+        """Should compute Re."""
+        re = self.fluid.reynolds_number(1000.0, 1.0, 0.1)
+        self.assertGreater(re, 0)
+        print(f"  [PASS] Re: {re:.0f}")
 
 
-class TestShearStressAnalyzer(unittest.TestCase):
-    """Test shear."""
+class TestPowerLawFluid(unittest.TestCase):
+    """Test power law."""
     
     def setUp(self):
-        self.ssa = ShearStressAnalyzer()
+        self.fluid = PowerLawFluid(0.5, 0.8)
     
-    def test_yield(self):
-        """Should estimate yield."""
-        pts = [RheologyPoint(1.0, 5.0, 0.0), RheologyPoint(2.0, 10.0, 1.0)]
-        y = self.ssa.yield_stress(pts)
-        self.assertEqual(y, 5.0)
-        print(f"  [PASS] Yield: {y} Pa")
+    def test_shear_stress(self):
+        """Should compute stress."""
+        tau = self.fluid.shear_stress(10.0)
+        self.assertGreater(tau, 0)
+        print(f"  [PASS] Tau: {tau:.3f} Pa")
     
-    def test_bingham(self):
-        """Should compute Bingham."""
-        s = self.ssa.bingham_model(5.0, 2.0, 10.0)
-        self.assertEqual(s, 25.0)
-        print(f"  [PASS] Bing: {s} Pa")
+    def test_apparent_viscosity(self):
+        """Should compute viscosity."""
+        eta = self.fluid.apparent_viscosity(10.0)
+        self.assertGreater(eta, 0)
+        print(f"  [PASS] Eta: {eta:.4f} Pa.s")
+
+
+class TestMaxwellModel(unittest.TestCase):
+    """Test Maxwell."""
     
-    def test_casson(self):
-        """Should compute Casson."""
-        s = self.ssa.casson_model(4.0, 1.0, 16.0)
+    def setUp(self):
+        self.m = MaxwellModel(1e6, 1e3)
+    
+    def test_relaxation_time(self):
+        """Should compute tau."""
+        tau = self.m.relaxation_time()
+        self.assertAlmostEqual(tau, 0.001, delta=1e-6)
+        print(f"  [PASS] Tau: {tau:.4f} s")
+    
+    def test_stress_relaxation(self):
+        """Should relax."""
+        s = self.m.stress_relaxation(100.0, 0.001)
+        self.assertLess(s, 100.0)
         self.assertGreater(s, 0)
-        print(f"  [PASS] Cass: {s:.2f} Pa")
-
-
-class TestModulusAnalyzer(unittest.TestCase):
-    """Test modulus."""
+        print(f"  [PASS] SR: {s:.2f} Pa")
     
-    def setUp(self):
-        self.ma = ModulusAnalyzer()
-    
-    def test_storage(self):
-        """Should compute G'."""
-        g = self.ma.storage_modulus(100.0, 0.1, 0.0)
-        self.assertEqual(g, 1000.0)
-        print(f"  [PASS] G': {g} Pa")
-    
-    def test_loss(self):
-        """Should compute G''."""
-        g = self.ma.loss_modulus(100.0, 0.1, 90.0)
-        self.assertEqual(g, 1000.0)
-        print(f"  [PASS] G'': {g} Pa")
-    
-    def test_tan_delta(self):
-        """Should compute tan(delta)."""
-        t = self.ma.tan_delta(100.0, 50.0)
-        self.assertEqual(t, 0.5)
-        print(f"  [PASS] Tan: {t}")
-    
-    def test_complex(self):
-        """Should compute |G*|."""
-        g = self.ma.complex_modulus(300.0, 400.0)
-        self.assertEqual(g, 500.0)
-        print(f"  [PASS] |G*|: {g} Pa")
-
-
-class TestCreepCompliance(unittest.TestCase):
-    """Test creep."""
-    
-    def setUp(self):
-        self.cc = CreepCompliance()
-    
-    def test_compliance(self):
+    def test_creep_compliance(self):
         """Should compute compliance."""
-        c = self.cc.compliance(0.1, 1000.0)
-        self.assertEqual(c, 1e-4)
-        print(f"  [PASS] Comp: {c}")
+        j = self.m.creep_compliance(0.01)
+        self.assertGreater(j, 0)
+        print(f"  [PASS] J: {j:.2e} 1/Pa")
+
+
+class TestKelvinVoigtModel(unittest.TestCase):
+    """Test KV."""
     
-    def test_maxwell(self):
-        """Should compute Maxwell."""
-        c = self.cc.maxwell_compliance(1.0, 1e6, 1e3)
-        self.assertGreater(c, 0)
-        print(f"  [PASS] Maxw: {c:.2e}")
+    def setUp(self):
+        self.kv = KelvinVoigtModel(1e6, 1e3)
     
-    def test_kv(self):
-        """Should compute K-V."""
-        c = self.cc.kelvin_voigt_compliance(1.0, 1e6, 1e3, 1000.0)
-        self.assertGreater(c, 0)
-        print(f"  [PASS] KV: {c:.2e}")
+    def test_retardation_time(self):
+        """Should compute tau."""
+        tau = self.kv.retardation_time()
+        self.assertAlmostEqual(tau, 0.001, delta=1e-6)
+        print(f"  [PASS] Tau: {tau:.4f} s")
+    
+    def test_creep_strain(self):
+        """Should compute strain."""
+        e = self.kv.creep_strain(1e6, 0.01)
+        self.assertGreater(e, 0)
+        print(f"  [PASS] Str: {e:.4f}")
 
 
 class TestRheology(unittest.TestCase):
@@ -129,24 +104,10 @@ class TestRheology(unittest.TestCase):
     def setUp(self):
         self.r = Rheology()
     
-    def test_add(self):
-        """Should add point."""
-        self.r.add_point(RheologyPoint(1.0, 10.0, 0.0))
-        self.assertEqual(len(self.r.points), 1)
-        print("  [PASS] Add")
-    
-    def test_analyze(self):
-        """Should analyze."""
-        self.r.add_point(RheologyPoint(1.0, 10.0, 0.0))
-        self.r.add_point(RheologyPoint(2.0, 20.0, 1.0))
-        a = self.r.analyze()
-        self.assertIn("apparent_viscosity_Pa_s", a)
-        print(f"  [PASS] Anlz: {a}")
-    
     def test_summary(self):
         """Should summarize."""
-        s = self.r.rheo_summary()
-        self.assertIn("methods", s)
+        s = self.r.rheology_summary()
+        self.assertIn("models", s)
         print(f"  [PASS] Sum: {s}")
 
 
