@@ -8,89 +8,102 @@ import os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from visual_servoing import (ImageFeature, ImageBasedServoing,
-                             PositionBasedServoing,
-                             FeatureTracker,
-                             CameraRobotCalibration,
+from visual_servoing import (ImageFeature, Point3D,
+                             ImageBasedVisualServoing,
+                             PositionBasedVisualServoing,
+                             FeatureTracking,
+                             CameraCalibration,
                              VisualServoing)
 
 
-class TestImageBasedServoing(unittest.TestCase):
+class TestImageBasedVisualServoing(unittest.TestCase):
     """Test IBVS."""
     
     def setUp(self):
-        self.ibvs = ImageBasedServoing(500.0, 0.1)
+        self.ibvs = ImageBasedVisualServoing()
     
-    def test_interaction_matrix(self):
-        """Should compute L."""
-        L = self.ibvs.interaction_matrix(ImageFeature(10.0, 20.0), 1.0)
+    def test_interaction(self):
+        """Should compute interaction matrix."""
+        f = ImageFeature(10.0, 20.0)
+        L = self.ibvs.interaction_matrix(f)
         self.assertEqual(len(L), 2)
         self.assertEqual(len(L[0]), 6)
-        print("  [PASS] L")
+        print(f"  [PASS] L: 2x6")
     
     def test_error(self):
         """Should compute error."""
-        e = self.ibvs.error_vector(ImageFeature(15.0, 25.0), ImageFeature(10.0, 20.0))
+        c = ImageFeature(10.0, 20.0)
+        d = ImageFeature(5.0, 15.0)
+        e = self.ibvs.feature_error(c, d)
         self.assertEqual(e, [5.0, 5.0])
-        print(f"  [PASS] e: {e}")
+        print(f"  [PASS] E: {e}")
     
     def test_velocity(self):
         """Should compute velocity."""
-        v = self.ibvs.camera_velocity(ImageFeature(15.0, 25.0), ImageFeature(10.0, 20.0), 1.0)
+        c = ImageFeature(10.0, 0.0)
+        d = ImageFeature(0.0, 0.0)
+        v = self.ibvs.camera_velocity(c, d)
         self.assertEqual(len(v), 6)
-        print(f"  [PASS] v: {v}")
+        print(f"  [PASS] V: {len(v)}D")
 
 
-class TestPositionBasedServoing(unittest.TestCase):
+class TestPositionBasedVisualServoing(unittest.TestCase):
     """Test PBVS."""
     
     def setUp(self):
-        self.pbvs = PositionBasedServoing(0.5)
+        self.pbvs = PositionBasedVisualServoing()
     
     def test_error(self):
-        """Should compute error."""
-        e = self.pbvs.position_error([1.0, 2.0, 3.0, 0.0, 0.0, 0.0],
-                                     [0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
-        self.assertEqual(e[0], 1.0)
-        print(f"  [PASS] e: {e}")
+        """Should compute pose error."""
+        e = self.pbvs.pose_error([1.0, 2.0, 3.0], [0.0, 1.0, 2.0])
+        self.assertEqual(e, [1.0, 1.0, 1.0])
+        print(f"  [PASS] E: {e}")
+    
+    def test_command(self):
+        """Should compute velocity command."""
+        v = self.pbvs.velocity_command([1.0, 0.0, 0.0], [0.0, 0.0, 0.0])
+        self.assertEqual(v, [-0.5, 0.0, 0.0])
+        print(f"  [PASS] V: {v}")
 
 
-class TestFeatureTracker(unittest.TestCase):
-    """Test tracker."""
+class TestFeatureTracking(unittest.TestCase):
+    """Test tracking."""
     
     def setUp(self):
-        self.ft = FeatureTracker()
+        self.ft = FeatureTracking()
     
-    def test_centroid(self):
-        """Should compute centroid."""
-        c = self.ft.centroid([ImageFeature(0.0, 0.0), ImageFeature(10.0, 20.0)])
-        self.assertEqual(c.u, 5.0)
-        print(f"  [PASS] Cen: ({c.u}, {c.v})")
+    def test_update(self):
+        """Should update track."""
+        self.ft.update_track(0, ImageFeature(10.0, 20.0))
+        self.assertEqual(self.ft.num_tracks(), 1)
+        print(f"  [PASS] Tracks: {self.ft.num_tracks()}")
     
-    def test_bbox(self):
-        """Should compute bounding box."""
-        b = self.ft.bounding_box([ImageFeature(0.0, 5.0), ImageFeature(10.0, 20.0)])
-        self.assertEqual(b, (0.0, 5.0, 10.0, 20.0))
-        print(f"  [PASS] BBox: {b}")
+    def test_velocity(self):
+        """Should compute velocity."""
+        self.ft.update_track(0, ImageFeature(0.0, 0.0))
+        self.ft.update_track(0, ImageFeature(10.0, 20.0))
+        v = self.ft.track_velocity(0)
+        self.assertEqual(v, (10.0, 20.0))
+        print(f"  [PASS] Vel: {v}")
 
 
-class TestCameraRobotCalibration(unittest.TestCase):
-    """Test calibration."""
+class TestCameraCalibration(unittest.TestCase):
+    """Test camera."""
     
     def setUp(self):
-        self.cal = CameraRobotCalibration()
+        self.cam = CameraCalibration()
     
-    def test_pixel_to_meter(self):
-        """Should convert pixels to meters."""
-        m = self.cal.pixel_to_meter(100.0, 2.0, 500.0)
-        self.assertEqual(m, 0.4)
-        print(f"  [PASS] m: {m:.3f}")
+    def test_project(self):
+        """Should project 3D to 2D."""
+        p = self.cam.project(Point3D(1.0, 0.0, 1.0))
+        self.assertEqual(p.u, 820.0)
+        print(f"  [PASS] P: ({p.u}, {p.v})")
     
-    def test_meter_to_pixel(self):
-        """Should convert meters to pixels."""
-        p = self.cal.meter_to_pixel(0.4, 2.0, 500.0)
-        self.assertEqual(p, 100.0)
-        print(f"  [PASS] px: {p:.1f}")
+    def test_backproject(self):
+        """Should backproject 2D to 3D."""
+        p = self.cam.backproject(ImageFeature(320.0, 240.0))
+        self.assertEqual(p.x, 0.0)
+        print(f"  [PASS] BP: ({p.x}, {p.y}, {p.z})")
 
 
 class TestVisualServoing(unittest.TestCase):
@@ -101,7 +114,7 @@ class TestVisualServoing(unittest.TestCase):
     
     def test_summary(self):
         """Should summarize."""
-        s = self.vs.vs_summary()
+        s = self.vs.servoing_summary()
         self.assertIn("methods", s)
         print(f"  [PASS] Sum: {s}")
 
