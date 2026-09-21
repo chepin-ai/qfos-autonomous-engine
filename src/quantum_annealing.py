@@ -1,10 +1,11 @@
 """
 Quantum Annealing Module
-Ising model encoding, annealing schedule, energy landscape,
-and quantum tunneling for combinatorial optimization.
+Ising model, QUBO formulation,
+simulated annealing, energy landscapes, and optimization for autonomous quantum computing.
 """
 
 import math
+import random
 from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass
 
@@ -18,44 +19,45 @@ class SpinConfiguration:
 
 class IsingModel:
     """
-    Ising model representation.
+    Ising model Hamiltonian.
     """
     
-    def __init__(self, num_spins: int):
+    def __init__(self, num_spins: int = 4):
         """
         Args:
             num_spins: Number of spins
         """
-        self.n = num_spins
-        self.h: Dict[int, float] = {}
+        self.num_spins = num_spins
         self.J: Dict[Tuple[int, int], float] = {}
+        self.h: List[float] = [0.0] * num_spins
     
-    def set_field(self, i: int, h: float):
+    def set_coupling(self, i: int, j: int, value: float):
         """
-        Set local field.
+        Set coupling J_ij.
         
         Args:
             i: Spin index
-            h: Field strength
-        """
-        self.h[i] = h
-    
-    def set_coupling(self, i: int, j: int, J: float):
-        """
-        Set coupling.
-        
-        Args:
-            i, j: Spin indices
-            J: Coupling strength
+            j: Spin index
+            value: Coupling strength
         """
         if i < j:
-            self.J[(i, j)] = J
+            self.J[(i, j)] = value
         else:
-            self.J[(j, i)] = J
+            self.J[(j, i)] = value
+    
+    def set_field(self, i: int, value: float):
+        """
+        Set local field h_i.
+        
+        Args:
+            i: Spin index
+            value: Field strength
+        """
+        self.h[i] = value
     
     def energy(self, spins: List[int]) -> float:
         """
-        Compute energy.
+        Compute energy of spin configuration.
         
         Args:
             spins: Spin configuration
@@ -63,231 +65,230 @@ class IsingModel:
         Returns:
             Energy
         """
-        e = 0.0
+        E = 0.0
         
-        # Local fields
-        for i, h in self.h.items():
-            if i < len(spins):
-                e += h * spins[i]
+        # Local field terms
+        for i in range(self.num_spins):
+            E += self.h[i] * spins[i]
         
-        # Couplings
-        for (i, j), J in self.J.items():
-            if i < len(spins) and j < len(spins):
-                e += J * spins[i] * spins[j]
+        # Coupling terms
+        for (i, j), J_ij in self.J.items():
+            E += J_ij * spins[i] * spins[j]
         
-        return e
-
-
-class AnnealingSchedule:
-    """
-    Annealing schedule.
-    """
+        return E
     
-    def __init__(self, initial_gamma: float = 0.0,
-                 final_gamma: float = 1.0,
-                 num_steps: int = 100):
+    def ground_state(self) -> SpinConfiguration:
         """
-        Args:
-            initial_gamma: Initial ratio
-            final_gamma: Final ratio
-            num_steps: Steps
-        """
-        self.gamma_0 = initial_gamma
-        self.gamma_f = final_gamma
-        self.steps = num_steps
-    
-    def linear_schedule(self) -> List[float]:
-        """
-        Linear schedule.
+        Find ground state by exhaustive search (small systems).
         
         Returns:
-            Gamma values
+            Ground state configuration
         """
-        return [self.gamma_0 + (self.gamma_f - self.gamma_0) * i / self.steps
-                for i in range(self.steps + 1)]
-    
-    def exponential_schedule(self, rate: float = 0.1) -> List[float]:
-        """
-        Exponential schedule.
+        min_energy = float('inf')
+        best_spins = []
         
-        Args:
-            rate: Rate
-        
-        Returns:
-            Gamma values
-        """
-        return [self.gamma_0 + (self.gamma_f - self.gamma_0) *
-                (1.0 - math.exp(-rate * i))
-                for i in range(self.steps + 1)]
-
-
-class QuantumAnnealer:
-    """
-    Quantum annealing solver.
-    """
-    
-    def __init__(self, model: IsingModel):
-        """
-        Args:
-            model: Ising model
-        """
-        self.model = model
-        self.best: Optional[SpinConfiguration] = None
-    
-    def anneal(self, schedule: List[float],
-              initial_spins: List[int]) -> SpinConfiguration:
-        """
-        Perform quantum annealing.
-        
-        Args:
-            schedule: Annealing schedule
-            initial_spins: Initial configuration
-        
-        Returns:
-            Best configuration
-        """
-        spins = initial_spins.copy()
-        best_spins = spins.copy()
-        best_energy = self.model.energy(spins)
-        
-        for gamma in schedule:
-            # Classical energy minimization at each gamma
-            # Simplified: single random flip
-            import random
-            i = random.randint(0, len(spins) - 1)
-            
-            # Compute delta energy
-            spins[i] *= -1
-            new_energy = self.model.energy(spins)
-            
-            # Accept or reject
-            delta = new_energy - best_energy
-            
-            if delta < 0:
-                best_energy = new_energy
+        for config in range(2 ** self.num_spins):
+            spins = [1 if (config >> i) & 1 else -1
+                    for i in range(self.num_spins)]
+            E = self.energy(spins)
+            if E < min_energy:
+                min_energy = E
                 best_spins = spins.copy()
-            else:
-                # Tunneling probability (simplified)
-                if gamma > 0 and random.random() < math.exp(-delta / gamma):
-                    best_energy = new_energy
-                    best_spins = spins.copy()
-                else:
-                    spins[i] *= -1  # Revert
         
-        self.best = SpinConfiguration(best_spins, best_energy)
-        return self.best
+        return SpinConfiguration(best_spins, min_energy)
 
 
-class EnergyLandscape:
+class QUBO:
     """
-    Energy landscape analysis.
+    Quadratic Unconstrained Binary Optimization.
     """
     
-    def __init__(self, model: IsingModel):
+    def __init__(self, num_variables: int = 4):
         """
         Args:
-            model: Ising model
+            num_variables: Number of binary variables
         """
-        self.model = model
+        self.num_variables = num_variables
+        self.Q: Dict[Tuple[int, int], float] = {}
     
-    def local_minima(self, samples: List[List[int]]) -> List[SpinConfiguration]:
+    def set_coefficient(self, i: int, j: int, value: float):
         """
-        Find local minima.
+        Set QUBO coefficient Q_ij.
         
         Args:
-            samples: Sample configurations
-        
-        Returns:
-            Local minima
+            i: Variable index
+            j: Variable index
+            value: Coefficient
         """
-        minima = []
-        seen = set()
-        
-        for s in samples:
-            key = tuple(s)
-            if key in seen:
-                continue
-            seen.add(key)
-            
-            e = self.model.energy(s)
-            minima.append(SpinConfiguration(s.copy(), e))
-        
-        # Sort by energy
-        minima.sort(key=lambda x: x.energy)
-        return minima
+        self.Q[(i, j)] = value
     
-    def ground_state_energy(self) -> float:
+    def energy(self, x: List[int]) -> float:
         """
-        Estimate ground state energy.
+        Compute QUBO energy.
+        
+        Args:
+            x: Binary configuration
         
         Returns:
             Energy
         """
-        if self.model.n <= 10:
-            # Brute force
-            min_energy = float('inf')
-            for i in range(2 ** self.model.n):
-                spins = [1 if (i >> j) & 1 else -1 for j in range(self.model.n)]
-                e = self.model.energy(spins)
-                min_energy = min(min_energy, e)
-            return min_energy
+        E = 0.0
+        for (i, j), Q_ij in self.Q.items():
+            E += Q_ij * x[i] * x[j]
+        return E
+    
+    def to_ising(self) -> IsingModel:
+        """
+        Convert QUBO to Ising model.
         
-        return 0.0  # Placeholder for large systems
+        Returns:
+            Ising model
+        """
+        ising = IsingModel(self.num_variables)
+        
+        for (i, j), Q_ij in self.Q.items():
+            if i == j:
+                ising.set_field(i, Q_ij / 2.0)
+            else:
+                ising.set_coupling(i, j, Q_ij / 4.0)
+        
+        return ising
+
+
+class SimulatedAnnealing:
+    """
+    Simulated annealing solver.
+    """
+    
+    def __init__(self, ising: IsingModel,
+                 initial_temperature: float = 10.0,
+                 cooling_rate: float = 0.95,
+                 num_iterations: int = 1000):
+        """
+        Args:
+            ising: Ising model
+            initial_temperature: Initial temperature
+            cooling_rate: Cooling rate
+            num_iterations: Iterations
+        """
+        self.ising = ising
+        self.T0 = initial_temperature
+        self.alpha = cooling_rate
+        self.iterations = num_iterations
+    
+    def solve(self) -> SpinConfiguration:
+        """
+        Solve using simulated annealing.
+        
+        Returns:
+            Best configuration found
+        """
+        # Random initial state
+        spins = [random.choice([-1, 1]) for _ in range(self.ising.num_spins)]
+        current_energy = self.ising.energy(spins)
+        best_spins = spins.copy()
+        best_energy = current_energy
+        
+        T = self.T0
+        
+        for _ in range(self.iterations):
+            # Random flip
+            i = random.randint(0, self.ising.num_spins - 1)
+            spins[i] *= -1
+            new_energy = self.ising.energy(spins)
+            
+            delta_E = new_energy - current_energy
+            
+            if delta_E < 0 or random.random() < math.exp(-delta_E / T):
+                current_energy = new_energy
+                if current_energy < best_energy:
+                    best_energy = current_energy
+                    best_spins = spins.copy()
+            else:
+                spins[i] *= -1  # Revert
+            
+            T *= self.alpha
+        
+        return SpinConfiguration(best_spins, best_energy)
 
 
 class QuantumAnnealing:
     """
+    Quantum annealing simulation.
+    """
+    
+    def __init__(self, ising: IsingModel,
+                 gamma_schedule: List[float] = None):
+        """
+        Args:
+            ising: Ising model
+            gamma_schedule: Transverse field schedule
+        """
+        self.ising = ising
+        self.gamma_schedule = gamma_schedule or [1.0 - i / 100.0 for i in range(100)]
+    
+    def tunneling_probability(self, barrier_height: float,
+                             gamma: float) -> float:
+        """
+        Compute quantum tunneling probability.
+        
+        Args:
+            barrier_height: Energy barrier
+            gamma: Transverse field
+        
+        Returns:
+            Tunneling probability
+        """
+        if gamma <= 0:
+            return 0.0
+        return math.exp(-barrier_height / gamma)
+    
+    def solve(self) -> SpinConfiguration:
+        """
+        Solve using quantum annealing simulation.
+        
+        Returns:
+            Best configuration found
+        """
+        spins = [random.choice([-1, 1]) for _ in range(self.ising.num_spins)]
+        best_spins = spins.copy()
+        best_energy = self.ising.energy(spins)
+        
+        for gamma in self.gamma_schedule:
+            # Thermal + quantum fluctuations
+            for _ in range(10):
+                i = random.randint(0, self.ising.num_spins - 1)
+                spins[i] *= -1
+                new_energy = self.ising.energy(spins)
+                
+                delta_E = new_energy - best_energy
+                
+                if delta_E < 0:
+                    best_energy = new_energy
+                    best_spins = spins.copy()
+                elif random.random() < self.tunneling_probability(delta_E, gamma):
+                    best_energy = new_energy
+                    best_spins = spins.copy()
+                else:
+                    spins[i] *= -1
+        
+        return SpinConfiguration(best_spins, best_energy)
+
+
+class QuantumAnnealingController:
+    """
     Unified quantum annealing controller.
     """
     
-    def __init__(self, num_spins: int = 8):
-        self.model = IsingModel(num_spins)
-        self.schedule = AnnealingSchedule()
-        self.annealer = QuantumAnnealer(self.model)
-        self.landscape = EnergyLandscape(self.model)
-    
-    def solve(self, h: Dict[int, float],
-             J: Dict[Tuple[int, int], float],
-             num_runs: int = 10) -> Dict:
-        """
-        Solve Ising problem.
-        
-        Args:
-            h: Local fields
-            J: Couplings
-            num_runs: Runs
-        
-        Returns:
-            Results
-        """
-        for i, hi in h.items():
-            self.model.set_field(i, hi)
-        for (i, j), Jij in J.items():
-            self.model.set_coupling(i, j, Jij)
-        
-        schedule = self.schedule.linear_schedule()
-        
-        best_energy = float('inf')
-        best_spins = []
-        
-        import random
-        for _ in range(num_runs):
-            initial = [random.choice([-1, 1]) for _ in range(self.model.n)]
-            result = self.annealer.anneal(schedule, initial)
-            if result.energy < best_energy:
-                best_energy = result.energy
-                best_spins = result.spins.copy()
-        
-        return {
-            "best_energy": best_energy,
-            "best_spins": best_spins,
-            "num_runs": num_runs
-        }
+    def __init__(self, num_spins: int = 4):
+        self.ising = IsingModel(num_spins)
+        self.qubo = QUBO(num_spins)
+        self.sa = SimulatedAnnealing(self.ising)
+        self.qa = QuantumAnnealing(self.ising)
     
     def qa_summary(self) -> Dict:
         """Get summary."""
         return {
-            "num_spins": self.model.n,
-            "couplings": len(self.model.J),
-            "fields": len(self.model.h)
+            "methods": ["ising_model", "qubo", "simulated_annealing", "quantum_annealing"],
+            "num_spins": self.ising.num_spins
         }

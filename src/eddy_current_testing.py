@@ -1,7 +1,7 @@
 """
 Eddy Current Testing Module
-Electromagnetic induction, impedance analysis, crack detection,
-and material property evaluation for autonomous NDT.
+Impedance analysis, flaw detection, conductivity measurement,
+lift-off compensation, and frequency response for autonomous NDT.
 """
 
 import math
@@ -10,210 +10,221 @@ from dataclasses import dataclass
 
 
 @dataclass
-class CoilMeasurement:
-    """Eddy current coil measurement."""
+class ImpedancePoint:
+    """Impedance measurement point."""
     frequency_Hz: float
-    impedance_real_Ohm: float
-    impedance_imag_Ohm: float
-    lift_off_mm: float
+    resistance_Ohm: float
+    reactance_Ohm: float
 
 
 class ImpedanceAnalyzer:
     """
-    Analyze eddy current impedance.
+    Eddy current impedance analysis.
     """
     
-    def __init__(self):
-        pass
-    
-    def impedance_magnitude(self, measurement: CoilMeasurement) -> float:
+    def __init__(self, coil_inductance_H: float = 1e-3,
+                 coil_resistance_Ohm: float = 10.0):
         """
-        Compute magnitude.
+        Args:
+            coil_inductance_H: Coil inductance
+            coil_resistance_Ohm: Coil resistance
+        """
+        self.L = coil_inductance_H
+        self.R_coil = coil_resistance_Ohm
+    
+    def impedance(self, frequency_Hz: float,
+                 sample_resistance_Ohm: float = 0.0,
+                 sample_reactance_Ohm: float = 0.0) -> Tuple[float, float]:
+        """
+        Compute total impedance.
         
         Args:
-            measurement: Measurement
+            frequency_Hz: Frequency
+            sample_resistance_Ohm: Sample resistance
+            sample_reactance_Ohm: Sample reactance
+        
+        Returns:
+            (R, X) impedance
+        """
+        omega = 2.0 * math.pi * frequency_Hz
+        X_L = omega * self.L
+        
+        R_total = self.R_coil + sample_resistance_Ohm
+        X_total = X_L + sample_reactance_Ohm
+        
+        return (R_total, X_total)
+    
+    def magnitude(self, R: float, X: float) -> float:
+        """
+        Compute impedance magnitude.
+        
+        Args:
+            R: Resistance
+            X: Reactance
         
         Returns:
             Magnitude
         """
-        return math.sqrt(measurement.impedance_real_Ohm**2 +
-                        measurement.impedance_imag_Ohm**2)
+        return math.sqrt(R ** 2 + X ** 2)
     
-    def phase_angle(self, measurement: CoilMeasurement) -> float:
+    def phase_angle(self, R: float, X: float) -> float:
         """
         Compute phase angle.
         
         Args:
-            measurement: Measurement
+            R: Resistance
+            X: Reactance
         
         Returns:
-            Phase in radians
+            Phase angle in degrees
         """
-        return math.atan2(measurement.impedance_imag_Ohm,
-                         measurement.impedance_real_Ohm)
-    
-    def reactance(self, measurement: CoilMeasurement) -> float:
-        """
-        Get reactance.
-        
-        Args:
-            measurement: Measurement
-        
-        Returns:
-            Reactance
-        """
-        return measurement.impedance_imag_Ohm
+        if R == 0:
+            return 90.0 if X > 0 else -90.0
+        return math.degrees(math.atan2(X, R))
     
     def skin_depth(self, conductivity_S_m: float,
-                  permeability_H_m: float,
-                  frequency_Hz: float) -> float:
+                  frequency_Hz: float,
+                  permeability_H_m: float = 4.0e-7 * math.pi) -> float:
         """
-        Compute skin depth.
+        Compute electromagnetic skin depth.
         
         Args:
-            conductivity_S_m: Conductivity
-            permeability_H_m: Permeability
+            conductivity_S_m: Electrical conductivity
             frequency_Hz: Frequency
+            permeability_H_m: Magnetic permeability
         
         Returns:
             Skin depth in meters
         """
-        if frequency_Hz <= 0 or conductivity_S_m <= 0:
+        if conductivity_S_m <= 0 or frequency_Hz <= 0:
             return float('inf')
-        return math.sqrt(1.0 / (math.pi * frequency_Hz *
-                                conductivity_S_m * permeability_H_m))
+        return math.sqrt(1.0 / (math.pi * frequency_Hz * conductivity_S_m * permeability_H_m))
 
 
-class CrackDetector:
+class FlawDetector:
     """
-    Detect cracks from impedance changes.
+    Eddy current flaw detection.
     """
     
-    def __init__(self, threshold_percent: float = 5.0):
+    def __init__(self, threshold_percent: float = 10.0):
         """
         Args:
             threshold_percent: Detection threshold
         """
         self.threshold = threshold_percent
     
-    def detect(self, reference: CoilMeasurement,
-              scan: CoilMeasurement) -> bool:
+    def detect_from_impedance(self,
+                              baseline: List[ImpedancePoint],
+                              measured: List[ImpedancePoint]) -> List[Dict]:
         """
-        Detect crack presence.
+        Detect flaws from impedance comparison.
         
         Args:
-            reference: Reference measurement
-            scan: Scan measurement
+            baseline: Baseline measurements
+            measured: Measured values
         
         Returns:
-            True if crack detected
+            Detected flaws
         """
-        ref_mag = math.sqrt(reference.impedance_real_Ohm**2 +
-                           reference.impedance_imag_Ohm**2)
-        scan_mag = math.sqrt(scan.impedance_real_Ohm**2 +
-                            scan.impedance_imag_Ohm**2)
+        flaws = []
+        for base, meas in zip(baseline, measured):
+            base_mag = math.sqrt(base.resistance_Ohm ** 2 + base.reactance_Ohm ** 2)
+            meas_mag = math.sqrt(meas.resistance_Ohm ** 2 + meas.reactance_Ohm ** 2)
+            
+            if base_mag > 0:
+                change_percent = abs(meas_mag - base_mag) / base_mag * 100.0
+                if change_percent > self.threshold:
+                    flaws.append({
+                        "frequency_Hz": base.frequency_Hz,
+                        "change_percent": change_percent,
+                        "severity": "high" if change_percent > 50.0 else "medium"
+                    })
         
-        if ref_mag <= 0:
-            return False
-        
-        change = abs(scan_mag - ref_mag) / ref_mag * 100.0
-        return change > self.threshold
+        return flaws
     
     def crack_depth_estimate(self, impedance_change_percent: float,
-                            skin_depth_mm: float) -> float:
+                            skin_depth_m: float) -> float:
         """
-        Estimate crack depth.
+        Estimate crack depth from impedance change.
         
         Args:
-            impedance_change_percent: Change
-            skin_depth_mm: Skin depth
+            impedance_change_percent: Impedance change
+            skin_depth_m: Skin depth
         
         Returns:
-            Depth in mm
+            Estimated depth in meters
         """
-        # Simplified model
-        return impedance_change_percent / 100.0 * skin_depth_mm
+        # Simplified: depth proportional to impedance change
+        return skin_depth_m * impedance_change_percent / 100.0
 
 
-class LiftOffCompensator:
+class ConductivityMeter:
     """
-    Compensate for lift-off effects.
+    Electrical conductivity measurement.
     """
     
     def __init__(self):
         pass
     
-    def compensate(self, measurement: CoilMeasurement,
-                  target_lift_off_mm: float) -> CoilMeasurement:
+    def conductivity_from_impedance(self, R_sample_Ohm: float,
+                                   thickness_m: float,
+                                   area_m2: float) -> float:
         """
-        Compensate lift-off.
+        Compute conductivity from sample resistance.
         
         Args:
-            measurement: Measurement
-            target_lift_off_mm: Target lift-off
-        
-        Returns:
-            Compensated measurement
-        """
-        delta = measurement.lift_off_mm - target_lift_off_mm
-        
-        # Simplified: assume impedance changes linearly with lift-off
-        compensation_factor = 1.0 - 0.05 * delta
-        
-        return CoilMeasurement(
-            measurement.frequency_Hz,
-            measurement.impedance_real_Ohm * compensation_factor,
-            measurement.impedance_imag_Ohm * compensation_factor,
-            target_lift_off_mm
-        )
-
-
-class MaterialPropertyEvaluator:
-    """
-    Evaluate material properties from eddy current data.
-    """
-    
-    def __init__(self):
-        pass
-    
-    def conductivity(self, impedance_real: float,
-                    coil_radius_mm: float,
-                    frequency_Hz: float) -> float:
-        """
-        Estimate conductivity.
-        
-        Args:
-            impedance_real: Real impedance
-            coil_radius_mm: Coil radius
-            frequency_Hz: Frequency
+            R_sample_Ohm: Sample resistance
+            thickness_m: Sample thickness
+            area_m2: Sample area
         
         Returns:
             Conductivity in S/m
         """
-        if coil_radius_mm <= 0 or frequency_Hz <= 0:
+        if R_sample_Ohm <= 0 or thickness_m <= 0:
             return 0.0
-        
-        # Simplified model
-        area = math.pi * (coil_radius_mm / 1000.0) ** 2
-        return impedance_real / (2.0 * math.pi * frequency_Hz * area)
+        return thickness_m / (R_sample_Ohm * area_m2)
     
-    def permeability(self, impedance_imag: float,
-                    coil_inductance_H: float) -> float:
+    def iacs_conductivity(self, conductivity_S_m: float) -> float:
         """
-        Estimate permeability.
+        Convert to %IACS (International Annealed Copper Standard).
         
         Args:
-            impedance_imag: Imaginary impedance
-            coil_inductance_H: Coil inductance
+            conductivity_S_m: Conductivity
         
         Returns:
-            Relative permeability
+            %IACS
         """
-        if coil_inductance_H <= 0:
-            return 1.0
+        copper_conductivity = 5.8e7
+        return conductivity_S_m / copper_conductivity * 100.0
+
+
+class LiftOffCompensator:
+    """
+    Lift-off compensation for eddy current testing.
+    """
+    
+    def __init__(self):
+        pass
+    
+    def compensated_impedance(self, measured_R: float,
+                             measured_X: float,
+                             lift_off_m: float,
+                             reference_lift_off_m: float = 0.001) -> Tuple[float, float]:
+        """
+        Compensate for lift-off effect.
         
-        mu0 = 4.0 * math.pi * 1e-7
-        return impedance_imag / (2.0 * math.pi * coil_inductance_H) / mu0
+        Args:
+            measured_R: Measured resistance
+            measured_X: Measured reactance
+            lift_off_m: Actual lift-off
+            reference_lift_off_m: Reference lift-off
+        
+        Returns:
+            Compensated (R, X)
+        """
+        # Simplified: linear compensation
+        ratio = reference_lift_off_m / lift_off_m if lift_off_m > 0 else 1.0
+        return (measured_R * ratio, measured_X * ratio)
 
 
 class EddyCurrentTesting:
@@ -222,57 +233,15 @@ class EddyCurrentTesting:
     """
     
     def __init__(self):
-        self.analyzer = ImpedanceAnalyzer()
-        self.detector = CrackDetector()
-        self.compensator = LiftOffCompensator()
-        self.evaluator = MaterialPropertyEvaluator()
-        self.measurements: List[CoilMeasurement] = []
-        self.reference: Optional[CoilMeasurement] = None
-    
-    def set_reference(self, measurement: CoilMeasurement):
-        """
-        Set reference.
-        
-        Args:
-            measurement: Reference
-        """
-        self.reference = measurement
-    
-    def scan(self, measurement: CoilMeasurement):
-        """
-        Add scan.
-        
-        Args:
-            measurement: Measurement
-        """
-        self.measurements.append(measurement)
-    
-    def inspect(self) -> Dict:
-        """
-        Inspect.
-        
-        Returns:
-            Results
-        """
-        if not self.measurements or not self.reference:
-            return {}
-        
-        cracks = 0
-        for m in self.measurements:
-            if self.detector.detect(self.reference, m):
-                cracks += 1
-        
-        return {
-            "scans": len(self.measurements),
-            "crack_indications": cracks,
-            "skin_depth_mm": self.analyzer.skin_depth(
-                1e6, 4.0 * math.pi * 1e-7, self.reference.frequency_Hz
-            ) * 1000.0 if self.reference else 0.0
-        }
+        self.impedance = ImpedanceAnalyzer()
+        self.flaw = FlawDetector()
+        self.conductivity = ConductivityMeter()
+        self.lift_off = LiftOffCompensator()
     
     def ect_summary(self) -> Dict:
         """Get summary."""
         return {
-            "measurements": len(self.measurements),
-            "reference_set": self.reference is not None
+            "methods": ["impedance_analysis", "flaw_detection", "conductivity", "lift_off"],
+            "coil_L_H": self.impedance.L,
+            "coil_R_Ohm": self.impedance.R_coil
         }
