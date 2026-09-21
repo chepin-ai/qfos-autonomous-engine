@@ -1,425 +1,231 @@
 """
 Grasp Planning Module
-Grasp quality, force closure, antipodal grasp detection,
-and hand configuration for autonomous manipulation.
+Grasp quality metrics, antipodal grasp detection,
+force closure, and gripper workspace for autonomous robotics.
 """
 
 import math
-from typing import Dict, List, Tuple, Optional, Set
+from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass
-from enum import Enum
-
-
-class GraspType(Enum):
-    """Type of grasp."""
-    PINCH = "pinch"
-    POWER = "power"
-    PRECISION = "precision"
-    HOOK = "hook"
-    SUCTION = "suction"
-    CAGING = "caging"
 
 
 @dataclass
 class ContactPoint:
-    """A contact point on an object."""
+    """Grasp contact point."""
     position: Tuple[float, float, float]
     normal: Tuple[float, float, float]
-    friction_coeff: float = 0.5
 
 
-class ForceClosureChecker:
+class GraspQualityMetrics:
     """
-    Check force closure conditions for a grasp.
-    """
-    
-    def __init__(self, friction_cone_resolution: int = 8):
-        """
-        Args:
-            friction_cone_resolution: Number of edges in friction cone
-        """
-        self.cone_res = friction_cone_resolution
-    
-    def friction_cone_edges(self, contact: ContactPoint) -> List[Tuple[float, float, float]]:
-        """
-        Compute friction cone edge vectors.
-        
-        Args:
-            contact: Contact point
-        
-        Returns:
-            List of edge direction vectors
-        """
-        mu = contact.friction_coeff
-        nx, ny, nz = contact.normal
-        
-        # Simplified: generate cone edges in tangent plane
-        edges = []
-        for i in range(self.cone_res):
-            angle = 2.0 * math.pi * i / self.cone_res
-            # Tangent direction (simplified, assumes normal is z-aligned)
-            tx = math.cos(angle)
-            ty = math.sin(angle)
-            tz = 0.0
-            
-            # Cone edge = normal + mu * tangent
-            ex = nx + mu * tx
-            ey = ny + mu * ty
-            ez = nz + mu * tz
-            
-            # Normalize
-            mag = math.sqrt(ex**2 + ey**2 + ez**2)
-            if mag > 0:
-                edges.append((ex/mag, ey/mag, ez/mag))
-        
-        return edges
-    
-    def is_force_closure(self, contacts: List[ContactPoint]) -> bool:
-        """
-        Check if grasp achieves force closure.
-        
-        Args:
-            contacts: List of contact points
-        
-        Returns:
-            True if force closure
-        """
-        if len(contacts) < 2:
-            return False
-        
-        # Simplified: check if contact normals oppose each other
-        # and contacts are on opposite sides of object center
-        if len(contacts) == 2:
-            n1 = contacts[0].normal
-            n2 = contacts[1].normal
-            
-            # Dot product of normals should be negative (opposing)
-            dot = n1[0]*n2[0] + n1[1]*n2[1] + n1[2]*n2[2]
-            
-            # Check if contacts are antipodal
-            p1 = contacts[0].position
-            p2 = contacts[1].position
-            
-            # Line between contacts should align with normals
-            dx = p2[0] - p1[0]
-            dy = p2[1] - p1[1]
-            dz = p2[2] - p1[2]
-            dist = math.sqrt(dx**2 + dy**2 + dz**2)
-            
-            if dist > 0:
-                # Direction from p1 to p2 should align with n1
-                align1 = (dx * n1[0] + dy * n1[1] + dz * n1[2]) / dist
-                align2 = (-dx * n2[0] - dy * n2[1] - dz * n2[2]) / dist
-                
-                # Both should point inward
-                if align1 > 0.7 and align2 > 0.7 and dot < -0.5:
-                    return True
-        
-        # For more contacts, use simplified check
-        return len(contacts) >= 3
-    
-    def grasp_wrench_space(self, contacts: List[ContactPoint]) -> List[Tuple[float, float, float, float, float, float]]:
-        """
-        Compute grasp wrench space (simplified 2D).
-        
-        Args:
-            contacts: Contact points
-        
-        Returns:
-            List of wrenches (Fx, Fy, Fz, Tx, Ty, Tz)
-        """
-        wrenches = []
-        
-        for c in contacts:
-            fx, fy, fz = c.normal
-            # Torque = r x F (simplified, only z-component)
-            tx = c.position[1] * fz - c.position[2] * fy
-            ty = c.position[2] * fx - c.position[0] * fz
-            tz = c.position[0] * fy - c.position[1] * fx
-            
-            wrenches.append((fx, fy, fz, tx, ty, tz))
-        
-        return wrenches
-
-
-class GraspQualityEvaluator:
-    """
-    Evaluate grasp quality metrics.
+    Grasp quality evaluation metrics.
     """
     
     def __init__(self):
-        self.fc_checker = ForceClosureChecker()
+        pass
     
-    def epsilon_quality(self, contacts: List[ContactPoint]) -> float:
+    def epsilon_quality(self, contact_points: List[ContactPoint],
+                       friction_coefficient: float = 0.5) -> float:
         """
-        Compute epsilon quality (radius of largest inscribed sphere
-        in grasp wrench space).
+        Compute epsilon quality (wrench space distance to origin).
         
         Args:
-            contacts: Contact points
+            contact_points: Contact points
+            friction_coefficient: Friction
         
         Returns:
             Epsilon quality
         """
-        if not self.fc_checker.is_force_closure(contacts):
+        if len(contact_points) < 2:
             return 0.0
-        
-        # Simplified: based on contact spread and alignment
-        if len(contacts) == 2:
-            p1 = contacts[0].position
-            p2 = contacts[1].position
-            dist = math.sqrt(sum((a-b)**2 for a, b in zip(p1, p2)))
-            
-            # Epsilon proportional to distance and friction
-            mu = min(c.friction_coeff for c in contacts)
-            return min(0.1 * dist * mu, 1.0)
-        
-        return 0.5  # Default for multi-contact
+        # Simplified: min distance from origin to wrench hull
+        # Use contact normals and friction cone approximation
+        distances = []
+        for cp in contact_points:
+            nx, ny, nz = cp.normal
+            mag = math.sqrt(nx**2 + ny**2 + nz**2)
+            if mag > 0:
+                distances.append(friction_coefficient / mag)
+        if not distances:
+            return 0.0
+        return min(distances)
     
-    def volume_quality(self, contacts: List[ContactPoint]) -> float:
+    def volume_quality(self, contact_points: List[ContactPoint]) -> float:
         """
-        Compute volume quality (volume of grasp wrench space).
+        Compute volume quality (wrench hull volume).
         
         Args:
-            contacts: Contact points
+            contact_points: Contact points
         
         Returns:
-            Volume metric
+            Volume quality
         """
-        if len(contacts) < 2:
+        if len(contact_points) < 3:
             return 0.0
-        
-        # Simplified: product of contact distances
-        volume = 0.0
-        for i in range(len(contacts)):
-            for j in range(i+1, len(contacts)):
-                p1 = contacts[i].position
-                p2 = contacts[j].position
-                dist = math.sqrt(sum((a-b)**2 for a, b in zip(p1, p2)))
-                volume += dist
-        
-        return volume / max(1, len(contacts) * (len(contacts) - 1) / 2)
-    
-    def antipodal_quality(self, contacts: List[ContactPoint]) -> float:
-        """
-        Measure how antipodal the grasp is.
-        
-        Args:
-            contacts: Contact points
-        
-        Returns:
-            Antipodal score (0-1)
-        """
-        if len(contacts) != 2:
-            return 0.0
-        
-        n1 = contacts[0].normal
-        n2 = contacts[1].normal
-        
-        # Normals should be opposite
-        dot = n1[0]*n2[0] + n1[1]*n2[1] + n1[2]*n2[2]
-        
-        # Position alignment
-        p1 = contacts[0].position
-        p2 = contacts[1].position
-        dx = p2[0] - p1[0]
-        dy = p2[1] - p1[1]
-        dz = p2[2] - p1[2]
-        dist = math.sqrt(dx**2 + dy**2 + dz**2)
-        
-        if dist == 0:
-            return 0.0
-        
-        # Line between contacts should align with both normals
-        align = abs(dx*n1[0] + dy*n1[1] + dz*n1[2]) / dist
-        
-        # Combine normal opposition and alignment
-        score = (-dot + align) / 2.0
-        return max(0.0, min(1.0, score))
+        # Simplified: sum of cross products
+        vol = 0.0
+        for i in range(len(contact_points)):
+            for j in range(i + 1, len(contact_points)):
+                p1 = contact_points[i].position
+                p2 = contact_points[j].position
+                vol += abs(p1[0] * p2[1] - p1[1] * p2[0])
+        return vol
 
 
-class HandConfiguration:
+class AntipodalGraspDetection:
     """
-    Hand/finger configuration for grasping.
-    """
-    
-    def __init__(self, num_fingers: int = 3):
-        """
-        Args:
-            num_fingers: Number of fingers
-        """
-        self.num_fingers = num_fingers
-        self.joint_angles: List[float] = [0.0] * num_fingers * 3
-        self.finger_positions: List[Tuple[float, float, float]] = []
-    
-    def set_joint_angles(self, angles: List[float]):
-        """Set joint angles."""
-        self.joint_angles = angles[:self.num_fingers * 3]
-    
-    def fingertip_positions(self, palm_position: Tuple[float, float, float] = (0.0, 0.0, 0.0)) -> List[Tuple[float, float, float]]:
-        """
-        Compute fingertip positions.
-        
-        Args:
-            palm_position: Palm center
-        
-        Returns:
-            Fingertip positions
-        """
-        positions = []
-        
-        for i in range(self.num_fingers):
-            # Simplified: fingers arranged radially
-            angle = 2.0 * math.pi * i / self.num_fingers
-            finger_len = 0.08  # 8cm finger
-            
-            x = palm_position[0] + finger_len * math.cos(angle)
-            y = palm_position[1] + finger_len * math.sin(angle)
-            z = palm_position[2]
-            
-            positions.append((x, y, z))
-        
-        self.finger_positions = positions
-        return positions
-    
-    def to_contacts(self, object_normals: List[Tuple[float, float, float]]) -> List[ContactPoint]:
-        """
-        Convert to contact points.
-        
-        Args:
-            object_normals: Surface normals at contact
-        
-        Returns:
-            Contact points
-        """
-        contacts = []
-        for pos, normal in zip(self.finger_positions, object_normals):
-            contacts.append(ContactPoint(pos, normal))
-        return contacts
-
-
-class GraspPlanner:
-    """
-    Plan grasps for objects.
+    Detect antipodal grasps.
     """
     
     def __init__(self):
-        self.quality = GraspQualityEvaluator()
-        self.fc = ForceClosureChecker()
+        pass
     
-    def plan_antipodal(self, object_radius_m: float = 0.05,
-                      object_center: Tuple[float, float, float] = (0.0, 0.0, 0.0)) -> List[ContactPoint]:
+    def is_antipodal(self, contact1: ContactPoint,
+                    contact2: ContactPoint,
+                    angular_tolerance_deg: float = 15.0) -> bool:
         """
-        Plan antipodal grasp on spherical object.
+        Check if two contacts form antipodal grasp.
         
         Args:
-            object_radius_m: Object radius
-            object_center: Object center
+            contact1, contact2: Contact points
+            angular_tolerance_deg: Tolerance
         
         Returns:
-            Contact points
+            True if antipodal
         """
-        # Two opposing contacts
-        c1 = (object_center[0] + object_radius_m, object_center[1], object_center[2])
-        c2 = (object_center[0] - object_radius_m, object_center[1], object_center[2])
-        
-        n1 = (1.0, 0.0, 0.0)
-        n2 = (-1.0, 0.0, 0.0)
-        
-        return [ContactPoint(c1, n1, 0.5), ContactPoint(c2, n2, 0.5)]
+        n1 = contact1.normal
+        n2 = contact2.normal
+        # Antipodal: normals point toward each other
+        dot = n1[0] * n2[0] + n1[1] * n2[1] + n1[2] * n2[2]
+        mag1 = math.sqrt(sum(c**2 for c in n1))
+        mag2 = math.sqrt(sum(c**2 for c in n2))
+        if mag1 <= 0 or mag2 <= 0:
+            return False
+        cos_angle = -dot / (mag1 * mag2)
+        tolerance_rad = math.radians(angular_tolerance_deg)
+        return cos_angle >= math.cos(tolerance_rad)
     
-    def plan_circular(self, object_radius_m: float = 0.05,
-                     num_contacts: int = 3) -> List[ContactPoint]:
+    def grasp_center(self, contact1: ContactPoint,
+                    contact2: ContactPoint) -> Tuple[float, float, float]:
         """
-        Plan circular grasp with multiple contacts.
+        Compute grasp center point.
         
         Args:
-            object_radius_m: Object radius
-            num_contacts: Number of contact points
+            contact1, contact2: Contact points
         
         Returns:
-            Contact points
+            Center position
         """
-        contacts = []
-        
-        for i in range(num_contacts):
-            angle = 2.0 * math.pi * i / num_contacts
-            x = object_radius_m * math.cos(angle)
-            y = object_radius_m * math.sin(angle)
-            z = 0.0
-            
-            # Normal points inward
-            nx = -math.cos(angle)
-            ny = -math.sin(angle)
-            nz = 0.0
-            
-            contacts.append(ContactPoint((x, y, z), (nx, ny, nz), 0.5))
-        
-        return contacts
+        p1 = contact1.position
+        p2 = contact2.position
+        return ((p1[0] + p2[0]) / 2.0,
+                (p1[1] + p2[1]) / 2.0,
+                (p1[2] + p2[2]) / 2.0)
+
+
+class ForceClosure:
+    """
+    Force closure analysis.
+    """
     
-    def select_best_grasp(self, candidates: List[List[ContactPoint]]) -> Tuple[List[ContactPoint], float]:
+    def __init__(self):
+        pass
+    
+    def is_force_closure(self, contact_points: List[ContactPoint],
+                        friction_coefficient: float = 0.5) -> bool:
         """
-        Select best grasp from candidates.
+        Check if grasp has force closure.
         
         Args:
-            candidates: List of candidate grasps
+            contact_points: Contact points
+            friction_coefficient: Friction
         
         Returns:
-            (best grasp, quality score)
+            True if force closure
         """
-        best = None
-        best_score = -1.0
+        if len(contact_points) < 2:
+            return False
+        # Simplified: check if friction cones positively span
+        # Force closure if epsilon quality > 0
+        from grasp_planning import GraspQualityMetrics
+        gqm = GraspQualityMetrics()
+        return gqm.epsilon_quality(contact_points, friction_coefficient) > 0.0
+    
+    def min_normal_force(self, external_wrench: List[float],
+                        contact_points: List[ContactPoint],
+                        friction_coefficient: float = 0.5) -> float:
+        """
+        Compute minimum contact normal force to resist wrench.
         
-        for grasp in candidates:
-            score = self.quality.epsilon_quality(grasp)
-            if score > best_score:
-                best_score = score
-                best = grasp
+        Args:
+            external_wrench: External wrench
+            contact_points: Contact points
+            friction_coefficient: Friction
         
-        return (best or [], best_score)
+        Returns:
+            Minimum normal force
+        """
+        if not contact_points:
+            return 0.0
+        # Simplified: distribute wrench equally
+        force_magnitude = math.sqrt(sum(w**2 for w in external_wrench[:3]))
+        return force_magnitude / (len(contact_points) * friction_coefficient)
+
+
+class GripperWorkspace:
+    """
+    Gripper workspace analysis.
+    """
+    
+    def __init__(self, max_aperture_mm: float = 100.0):
+        """
+        Args:
+            max_aperture_mm: Maximum aperture
+        """
+        self.max_aperture = max_aperture_mm
+    
+    def can_grasp(self, object_diameter_mm: float) -> bool:
+        """
+        Check if object fits in gripper.
+        
+        Args:
+            object_diameter_mm: Object diameter
+        
+        Returns:
+            True if graspable
+        """
+        return object_diameter_mm <= self.max_aperture
+    
+    def grasp_span(self, contact1: ContactPoint,
+                  contact2: ContactPoint) -> float:
+        """
+        Compute distance between contacts.
+        
+        Args:
+            contact1, contact2: Contact points
+        
+        Returns:
+            Distance (mm)
+        """
+        p1 = contact1.position
+        p2 = contact2.position
+        return math.sqrt(sum((a - b)**2 for a, b in zip(p1, p2)))
 
 
 class GraspPlanning:
     """
-    Unified grasp planning system.
+    Unified grasp planning controller.
     """
     
     def __init__(self):
-        self.planner = GraspPlanner()
-        self.hand = HandConfiguration()
-        self.quality = GraspQualityEvaluator()
-        self.grasps: List[List[ContactPoint]] = []
-    
-    def add_grasp(self, contacts: List[ContactPoint]):
-        """Add grasp candidate."""
-        self.grasps.append(contacts)
-    
-    def best_grasp(self) -> Tuple[Optional[List[ContactPoint]], float]:
-        """Get best grasp."""
-        return self.planner.select_best_grasp(self.grasps)
-    
-    def plan_for_object(self, radius_m: float = 0.05) -> List[ContactPoint]:
-        """
-        Plan grasp for spherical object.
-        
-        Args:
-            radius_m: Object radius
-        
-        Returns:
-            Contact points
-        """
-        antipodal = self.planner.plan_antipodal(radius_m)
-        circular = self.planner.plan_circular(radius_m, 3)
-        
-        self.grasps = [antipodal, circular]
-        best, score = self.best_grasp()
-        return best or []
+        self.quality = GraspQualityMetrics()
+        self.antipodal = AntipodalGraspDetection()
+        self.closure = ForceClosure()
+        self.workspace = GripperWorkspace()
     
     def grasp_summary(self) -> Dict:
-        """Get grasp summary."""
-        best, score = self.best_grasp()
+        """Get summary."""
         return {
-            "candidates": len(self.grasps),
-            "best_quality": score,
-            "force_closure": self.quality.fc_checker.is_force_closure(best) if best else False
+            "methods": ["quality_metrics", "antipodal", "force_closure", "workspace"],
+            "outputs": ["epsilon_quality", "volume_quality", "graspable"]
         }
