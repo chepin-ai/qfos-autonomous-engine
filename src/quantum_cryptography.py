@@ -1,7 +1,7 @@
 """
 Quantum Cryptography Module
-BB84 protocol, quantum key distribution, quantum random number generation,
-quantum secure direct communication, and quantum authentication.
+BB84, E91, quantum key distribution,
+entanglement-based crypto, and security analysis for autonomous quantum computing.
 """
 
 import math
@@ -11,11 +11,11 @@ from dataclasses import dataclass
 
 
 @dataclass
-class QuantumKey:
-    """Quantum key."""
-    bits: List[int]
-    basis: List[str]
+class QKDKey:
+    """Quantum key result."""
+    key: str
     length: int
+    error_rate: float
 
 
 class BB84Protocol:
@@ -24,312 +24,258 @@ class BB84Protocol:
     """
     
     def __init__(self):
-        self.alice_bits: List[int] = []
-        self.alice_basis: List[str] = []
-        self.bob_basis: List[str] = []
-        self.bob_results: List[int] = []
+        self.basis_choices: List[str] = []
+        self.bit_values: List[int] = []
     
-    def generate_bits(self, n: int) -> List[int]:
+    def generate_raw_key(self, num_bits: int) -> Tuple[List[int], List[str]]:
         """
-        Generate random bits.
+        Generate raw key with random bases.
         
         Args:
-            n: Number of bits
+            num_bits: Number of bits
         
         Returns:
-            Random bits
+            (bits, bases)
         """
-        return [random.randint(0, 1) for _ in range(n)]
+        bits = [random.randint(0, 1) for _ in range(num_bits)]
+        bases = [random.choice(["Z", "X"]) for _ in range(num_bits)]
+        return (bits, bases)
     
-    def generate_basis(self, n: int) -> List[str]:
+    def encode(self, bits: List[int],
+              bases: List[str]) -> List[str]:
         """
-        Generate random basis (rectilinear or diagonal).
+        Encode bits into quantum states.
         
         Args:
-            n: Number
+            bits: Bits to encode
+            bases: Bases for encoding
         
         Returns:
-            Basis choices
-        """
-        return [random.choice(["+", "X"]) for _ in range(n)]
-    
-    def prepare_qubits(self, bits: List[int],
-                      basis: List[str]) -> List[str]:
-        """
-        Prepare quantum states.
-        
-        Args:
-            bits: Bits
-            basis: Basis
-        
-        Returns:
-            State descriptions
+            State labels
         """
         states = []
-        for b, base in zip(bits, basis):
-            if base == "+":
-                states.append("|0>" if b == 0 else "|1>")
+        for bit, basis in zip(bits, bases):
+            if basis == "Z":
+                states.append("|0>" if bit == 0 else "|1>")
             else:
-                states.append("|+>" if b == 0 else "|->")
+                states.append("|+>" if bit == 0 else "|->")
         return states
     
-    def measure_qubits(self, states: List[str],
-                      basis: List[str]) -> List[int]:
+    def measure(self, states: List[str],
+               measure_bases: List[str]) -> List[int]:
         """
-        Measure qubits.
+        Measure states in given bases.
         
         Args:
-            states: States
-            basis: Measurement basis
+            states: Quantum states
+            measure_bases: Measurement bases
         
         Returns:
             Measurement results
         """
         results = []
-        for state, base in zip(states, basis):
-            if base == "+":
-                if state in ["|0>", "|+>"]:
-                    results.append(0)
-                elif state in ["|1>", "|->"]:
-                    results.append(1)
+        for state, basis in zip(states, measure_bases):
+            if basis == "Z":
+                if state in ["|0>", "|+>", "|->"]:
+                    # |+> and |-> have 50% chance of 0
+                    if state == "|0>":
+                        results.append(0)
+                    elif state == "|1>":
+                        results.append(1)
+                    else:
+                        results.append(random.randint(0, 1))
                 else:
-                    results.append(random.randint(0, 1))
+                    results.append(1)
             else:
-                if state in ["|0>", "|->"]:
-                    results.append(0)
-                elif state in ["|1>", "|+>"]:
-                    results.append(1)
+                if state in ["|+>", "|0>", "|1>"]:
+                    if state == "|+>":
+                        results.append(0)
+                    elif state == "|->":
+                        results.append(1)
+                    else:
+                        results.append(random.randint(0, 1))
                 else:
-                    results.append(random.randint(0, 1))
+                    results.append(1)
         return results
     
-    def sift_key(self, alice_basis: List[str],
-                bob_basis: List[str],
-                bob_results: List[int]) -> List[int]:
+    def sift_key(self, alice_bases: List[str],
+                bob_bases: List[str],
+                alice_bits: List[int],
+                bob_bits: List[int]) -> Tuple[str, float]:
         """
-        Sift key by matching basis.
+        Sift key by matching bases.
         
         Args:
-            alice_basis: Alice's basis
-            bob_basis: Bob's basis
-            bob_results: Bob's results
+            alice_bases: Alice's bases
+            bob_bases: Bob's bases
+            alice_bits: Alice's bits
+            bob_bits: Bob's bits
         
         Returns:
-            Sifted key
+            (sifted_key, error_rate)
         """
-        key = []
-        for ab, bb, br in zip(alice_basis, bob_basis, bob_results):
-            if ab == bb:
-                key.append(br)
-        return key
-    
-    def run_protocol(self, n: int = 100) -> QuantumKey:
-        """
-        Run full BB84 protocol.
+        matching = []
+        errors = 0
         
-        Args:
-            n: Number of qubits
+        for a_base, b_base, a_bit, b_bit in zip(alice_bases, bob_bases, alice_bits, bob_bits):
+            if a_base == b_base:
+                matching.append(str(a_bit))
+                if a_bit != b_bit:
+                    errors += 1
         
-        Returns:
-            Quantum key
-        """
-        self.alice_bits = self.generate_bits(n)
-        self.alice_basis = self.generate_basis(n)
-        self.bob_basis = self.generate_basis(n)
+        key = "".join(matching)
+        error_rate = errors / len(matching) if matching else 0.0
         
-        states = self.prepare_qubits(self.alice_bits, self.alice_basis)
-        self.bob_results = self.measure_qubits(states, self.bob_basis)
-        
-        key_bits = self.sift_key(self.alice_basis, self.bob_basis,
-                                self.bob_results)
-        
-        return QuantumKey(
-            bits=key_bits,
-            basis=[b for b, ab in zip(self.bob_basis, self.alice_basis)
-                   if b == ab],
-            length=len(key_bits)
-        )
+        return (key, error_rate)
 
 
-class QuantumRandomNumberGenerator:
+class E91Protocol:
     """
-    Quantum-inspired random number generator.
-    """
-    
-    def __init__(self, seed: Optional[int] = None):
-        """
-        Args:
-            seed: Random seed
-        """
-        if seed is not None:
-            random.seed(seed)
-    
-    def random_bit(self) -> int:
-        """
-        Generate random bit.
-        
-        Returns:
-            0 or 1
-        """
-        return random.randint(0, 1)
-    
-    def random_bits(self, n: int) -> List[int]:
-        """
-        Generate random bits.
-        
-        Args:
-            n: Number of bits
-        
-        Returns:
-            Bits
-        """
-        return [self.random_bit() for _ in range(n)]
-    
-    def random_float(self) -> float:
-        """
-        Generate random float [0, 1).
-        
-        Returns:
-            Float
-        """
-        return random.random()
-
-
-class QuantumSecureCommunication:
-    """
-    Quantum secure direct communication.
+    Ekert 91 entanglement-based QKD.
     """
     
     def __init__(self):
-        self.bb84 = BB84Protocol()
-        self.key: Optional[QuantumKey] = None
+        pass
     
-    def establish_key(self, length: int = 128) -> QuantumKey:
+    def generate_entangled_pair(self) -> Tuple[str, str]:
         """
-        Establish quantum key.
-        
-        Args:
-            length: Key length
+        Generate entangled Bell pair.
         
         Returns:
-            Quantum key
+            (alice_state, bob_state)
         """
-        # Need more qubits due to sifting
-        n = length * 4
-        self.key = self.bb84.run_protocol(n)
-        return self.key
+        # Simulate |Phi+> = (|00> + |11>) / sqrt(2)
+        if random.random() < 0.5:
+            return ("|0>", "|0>")
+        else:
+            return ("|1>", "|1>")
     
-    def encrypt_message(self, message: str) -> List[int]:
+    def CHSH_test(self, alice_results: List[int],
+                 bob_results: List[int],
+                 alice_bases: List[int],
+                 bob_bases: List[int]) -> float:
         """
-        Encrypt message with quantum key.
+        Compute CHSH correlation.
         
         Args:
-            message: Message
+            alice_results: Alice's measurements
+            bob_results: Bob's measurements
+            alice_bases: Alice's base choices
+            bob_bases: Bob's base choices
         
         Returns:
-            Ciphertext
+            S parameter
         """
-        if self.key is None or not self.key.bits:
-            return []
+        # Simplified CHSH: count correlations for basis combinations
+        E = {}
+        counts = {}
         
-        # Convert message to bits
-        message_bits = []
-        for char in message:
-            for i in range(8):
-                message_bits.append((ord(char) >> (7 - i)) & 1)
+        for a, b, a_base, b_base in zip(alice_results, bob_results, alice_bases, bob_bases):
+            key = (a_base, b_base)
+            if key not in counts:
+                counts[key] = {"same": 0, "diff": 0}
+            if a == b:
+                counts[key]["same"] += 1
+            else:
+                counts[key]["diff"] += 1
         
-        # XOR with key
-        ciphertext = []
-        for i, bit in enumerate(message_bits):
-            key_bit = self.key.bits[i % len(self.key.bits)]
-            ciphertext.append(bit ^ key_bit)
+        # Compute S = E(0,0) - E(0,1) + E(1,0) + E(1,1)
+        S = 0.0
+        for key, c in counts.items():
+            total = c["same"] + c["diff"]
+            if total > 0:
+                E_val = (c["same"] - c["diff"]) / total
+                E[key] = E_val
         
-        return ciphertext
-    
-    def decrypt_message(self, ciphertext: List[int]) -> str:
-        """
-        Decrypt message.
-        
-        Args:
-            ciphertext: Ciphertext
-        
-        Returns:
-            Message
-        """
-        if self.key is None or not self.key.bits:
-            return ""
-        
-        # XOR with key
-        plaintext_bits = []
-        for i, bit in enumerate(ciphertext):
-            key_bit = self.key.bits[i % len(self.key.bits)]
-            plaintext_bits.append(bit ^ key_bit)
-        
-        # Convert bits to string
-        chars = []
-        for i in range(0, len(plaintext_bits), 8):
-            byte = plaintext_bits[i:i+8]
-            if len(byte) == 8:
-                val = sum(b << (7 - j) for j, b in enumerate(byte))
-                chars.append(chr(val))
-        
-        return "".join(chars)
+        # Simplified S calculation
+        S = sum(abs(v) for v in E.values())
+        return S
 
 
-class QuantumAuthentication:
+class PrivacyAmplification:
     """
-    Quantum authentication protocol.
+    Privacy amplification for QKD.
     """
     
     def __init__(self):
-        self.shared_key: Optional[QuantumKey] = None
+        pass
     
-    def generate_challenge(self, length: int = 64) -> List[int]:
+    def xor_amplification(self, raw_key: str,
+                         block_size: int = 2) -> str:
         """
-        Generate authentication challenge.
+        XOR-based privacy amplification.
         
         Args:
-            length: Challenge length
+            raw_key: Raw key
+            block_size: Block size
         
         Returns:
-            Challenge bits
+            Amplified key
         """
-        return [random.randint(0, 1) for _ in range(length)]
+        result = []
+        for i in range(0, len(raw_key), block_size):
+            block = raw_key[i:i + block_size]
+            parity = sum(int(b) for b in block) % 2
+            result.append(str(parity))
+        return "".join(result)
     
-    def respond(self, challenge: List[int],
-               key: QuantumKey) -> List[int]:
+    def universal_hash(self, key: str,
+                      seed: int = 42) -> str:
         """
-        Generate response to challenge.
+        Universal hash function.
         
         Args:
-            challenge: Challenge
-            key: Shared key
+            key: Key
+            seed: Seed
         
         Returns:
-            Response
+            Hashed key
         """
-        response = []
-        for i, c in enumerate(challenge):
-            key_bit = key.bits[i % len(key.bits)]
-            response.append(c ^ key_bit)
-        return response
+        random.seed(seed)
+        # XOR with random mask
+        mask = "".join(str(random.randint(0, 1)) for _ in range(len(key)))
+        return "".join(str(int(a) ^ int(b)) for a, b in zip(key, mask))
+
+
+class SecurityAnalyzer:
+    """
+    QKD security analysis.
+    """
     
-    def verify(self, challenge: List[int],
-              response: List[int],
-              key: QuantumKey) -> bool:
+    def __init__(self):
+        pass
+    
+    def information_leakage(self, error_rate: float) -> float:
         """
-        Verify response.
+        Estimate information leakage to eavesdropper.
         
         Args:
-            challenge: Challenge
-            response: Response
-            key: Shared key
+            error_rate: QBER
         
         Returns:
-            True if valid
+            Leaked fraction
         """
-        expected = self.respond(challenge, key)
-        return response == expected
+        # Simplified: linear approximation
+        if error_rate >= 0.25:
+            return 1.0
+        return error_rate / 0.25
+    
+    def secure_key_rate(self, raw_rate: float,
+                       error_rate: float) -> float:
+        """
+        Compute secure key rate.
+        
+        Args:
+            raw_rate: Raw key rate
+            error_rate: Error rate
+        
+        Returns:
+            Secure key rate
+        """
+        # Simplified: key rate decreases with error
+        if error_rate >= 0.11:
+            return 0.0
+        return raw_rate * (1.0 - 2.0 * error_rate)
 
 
 class QuantumCryptography:
@@ -339,40 +285,34 @@ class QuantumCryptography:
     
     def __init__(self):
         self.bb84 = BB84Protocol()
-        self.qrng = QuantumRandomNumberGenerator()
-        self.communication = QuantumSecureCommunication()
-        self.authentication = QuantumAuthentication()
+        self.e91 = E91Protocol()
+        self.amplification = PrivacyAmplification()
+        self.security = SecurityAnalyzer()
     
-    def generate_secure_key(self, length: int = 128) -> QuantumKey:
+    def generate_key(self, num_bits: int = 100) -> QKDKey:
         """
-        Generate secure quantum key.
+        Generate quantum key.
         
         Args:
-            length: Key length
+            num_bits: Number of bits
         
         Returns:
-            Quantum key
+            QKD key
         """
-        return self.communication.establish_key(length)
-    
-    def secure_transmit(self, message: str) -> Tuple[List[int], QuantumKey]:
-        """
-        Securely transmit message.
+        alice_bits, alice_bases = self.bb84.generate_raw_key(num_bits)
+        states = self.bb84.encode(alice_bits, alice_bases)
         
-        Args:
-            message: Message
+        bob_bases = [random.choice(["Z", "X"]) for _ in range(num_bits)]
+        bob_bits = self.bb84.measure(states, bob_bases)
         
-        Returns:
-            (ciphertext, key)
-        """
-        key = self.generate_secure_key(len(message) * 8)
-        self.communication.key = key
-        ciphertext = self.communication.encrypt_message(message)
-        return (ciphertext, key)
+        key, error_rate = self.bb84.sift_key(alice_bases, bob_bases, alice_bits, bob_bits)
+        
+        return QKDKey(key, len(key), error_rate)
     
-    def qcrypto_summary(self) -> Dict:
+    def qc_summary(self) -> Dict:
         """Get summary."""
         return {
-            "protocols": ["BB84", "QRNG", "QSDC", "QAuth"],
-            "key_length": self.communication.key.length if self.communication.key else 0
+            "protocols": ["BB84", "E91"],
+            "methods": ["privacy_amplification", "CHSH_test", "security_analysis"],
+            "num_qubits": 1
         }
