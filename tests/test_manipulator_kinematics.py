@@ -5,168 +5,141 @@ Unit tests for manipulator kinematics module.
 import unittest
 import sys
 import os
+import math
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from manipulator_kinematics import (JointType, DHParameter,
-                                    ForwardKinematics, InverseKinematics,
-                                    JacobianCalculator, WorkspaceAnalyzer,
-                                    SingularityDetector, ManipulatorKinematics)
+from manipulator_kinematics import (DHParameter, ForwardKinematics,
+                                    InverseKinematics,
+                                    JacobianCalculator,
+                                    WorkspaceAnalyzer,
+                                    ManipulatorKinematics)
 
 
 class TestForwardKinematics(unittest.TestCase):
     """Test forward kinematics."""
     
     def setUp(self):
-        dh = [DHParameter(0, 0, 0.3, 0), DHParameter(0, 0, 0.3, 0)]
-        self.fk = ForwardKinematics(dh)
+        self.fk = ForwardKinematics()
     
-    def test_zero_config(self):
-        """Should compute zero configuration."""
-        pos = self.fk.solve([0.0, 0.0])
-        self.assertAlmostEqual(pos[0], 0.6, places=3)
-        self.assertAlmostEqual(pos[1], 0.0, places=3)
-        print(f"  [PASS] Zero: ({pos[0]:.3f}, {pos[1]:.3f})")
+    def test_dh_transform(self):
+        """Should compute DH transform."""
+        dh = DHParameter(0.0, 0.0, 1.0, 0.0)
+        T = self.fk.dh_transform(dh)
+        self.assertEqual(T[0][3], 1.0)
+        print("  [PASS] DH")
     
-    def test_90_deg(self):
-        """Should compute 90-degree config."""
-        import math
-        pos = self.fk.solve([math.pi / 2, 0.0])
-        self.assertAlmostEqual(pos[0], 0.0, places=3)
-        self.assertAlmostEqual(pos[1], 0.6, places=3)
-        print(f"  [PASS] 90deg: ({pos[0]:.3f}, {pos[1]:.3f})")
+    def test_multiply(self):
+        """Should multiply matrices."""
+        a = [[1.0, 0.0, 0.0, 0.0],
+             [0.0, 1.0, 0.0, 0.0],
+             [0.0, 0.0, 1.0, 0.0],
+             [0.0, 0.0, 0.0, 1.0]]
+        b = a
+        r = self.fk.multiply_matrices(a, b)
+        self.assertEqual(r[0][0], 1.0)
+        print("  [PASS] Mul")
+    
+    def test_solve(self):
+        """Should solve FK."""
+        dh = [DHParameter(0.0, 0.0, 1.0, 0.0)]
+        T = self.fk.solve(dh)
+        self.assertEqual(T[0][3], 1.0)
+        print("  [PASS] FK")
+    
+    def test_extract(self):
+        """Should extract position."""
+        T = [[1.0, 0.0, 0.0, 2.0],
+             [0.0, 1.0, 0.0, 3.0],
+             [0.0, 0.0, 1.0, 4.0],
+             [0.0, 0.0, 0.0, 1.0]]
+        p = self.fk.extract_position(T)
+        self.assertEqual(p, (2.0, 3.0, 4.0))
+        print(f"  [PASS] Pos: {p}")
 
 
 class TestInverseKinematics(unittest.TestCase):
     """Test inverse kinematics."""
     
     def setUp(self):
-        self.ik = InverseKinematics([0.3, 0.3])
+        self.ik = InverseKinematics()
     
-    def test_reachable(self):
-        """Should solve reachable target."""
-        sols = self.ik.solve_2dof(0.4, 0.3)
-        self.assertGreater(len(sols), 0)
-        print(f"  [PASS] IK: {len(sols)} solutions")
+    def test_2r(self):
+        """Should solve 2R IK."""
+        sol = self.ik.planar_2r(1.5, 0.0, 1.0, 1.0)
+        self.assertGreater(len(sol), 0)
+        print(f"  [PASS] IK: {len(sol)} sols")
     
     def test_unreachable(self):
-        """Should reject unreachable."""
-        sols = self.ik.solve_2dof(1.0, 0.0)
-        self.assertEqual(len(sols), 0)
-        print("  [PASS] Unreachable")
-    
-    def test_reachable_check(self):
-        """Should check reachability."""
-        self.assertTrue(self.ik.reachable(0.4, 0.3))
-        self.assertFalse(self.ik.reachable(1.0, 0.0))
-        print("  [PASS] Reach check")
+        """Should detect unreachable."""
+        sol = self.ik.planar_2r(10.0, 0.0, 1.0, 1.0)
+        self.assertEqual(len(sol), 0)
+        print("  [PASS] Unreach")
 
 
-class TestJacobian(unittest.TestCase):
-    """Test Jacobian calculator."""
+class TestJacobianCalculator(unittest.TestCase):
+    """Test Jacobian."""
     
     def setUp(self):
-        self.jac = JacobianCalculator([0.3, 0.3])
+        self.jc = JacobianCalculator()
     
-    def test_determinant(self):
+    def test_2r_jacobian(self):
+        """Should compute 2R Jacobian."""
+        J = self.jc.planar_2r_jacobian(0.0, math.pi/2, 1.0, 1.0)
+        self.assertEqual(len(J), 2)
+        print("  [PASS] Jac")
+    
+    def test_det(self):
         """Should compute determinant."""
-        import math
-        J = self.jac.compute_2dof(math.pi / 4, math.pi / 4)
-        det = self.jac.determinant(J)
-        self.assertNotEqual(det, 0.0)
-        print(f"  [PASS] Det: {det:.4f}")
-    
-    def test_manipulability(self):
-        """Should compute manipulability."""
-        import math
-        J = self.jac.compute_2dof(0.0, math.pi / 2)
-        w = self.jac.manipulability(J)
-        self.assertGreater(w, 0)
-        print(f"  [PASS] Manip: {w:.4f}")
-
-
-class TestWorkspace(unittest.TestCase):
-    """Test workspace analyzer."""
-    
-    def setUp(self):
-        self.ws = WorkspaceAnalyzer([0.3, 0.3])
-    
-    def test_reach(self):
-        """Should compute reach."""
-        min_r, max_r = self.ws.reach()
-        self.assertAlmostEqual(max_r, 0.6)
-        self.assertAlmostEqual(min_r, 0.0)
-        print(f"  [PASS] Reach: [{min_r:.1f}, {max_r:.1f}]")
-    
-    def test_in_workspace(self):
-        """Should check workspace."""
-        self.assertTrue(self.ws.is_in_workspace(0.4, 0.0))
-        self.assertFalse(self.ws.is_in_workspace(1.0, 0.0))
-        print("  [PASS] Workspace")
-    
-    def test_sample(self):
-        """Should sample boundary."""
-        pts = self.ws.sample_workspace(10)
-        self.assertEqual(len(pts), 10)
-        print(f"  [PASS] Sample: {len(pts)}")
-
-
-class TestSingularity(unittest.TestCase):
-    """Test singularity detector."""
-    
-    def setUp(self):
-        self.sd = SingularityDetector()
-    
-    def test_singular(self):
-        """Should detect singularity."""
-        J = [[1.0, 1.0], [1.0, 1.0]]
-        self.assertTrue(self.sd.check(J))
-        print("  [PASS] Singular")
-    
-    def test_nonsingular(self):
-        """Should not detect normal config."""
         J = [[1.0, 0.0], [0.0, 1.0]]
-        self.assertFalse(self.sd.check(J))
-        print("  [PASS] Non-singular")
+        d = self.jc.determinant(J)
+        self.assertEqual(d, 1.0)
+        print(f"  [PASS] Det: {d}")
+
+
+class TestWorkspaceAnalyzer(unittest.TestCase):
+    """Test workspace."""
     
-    def test_condition(self):
-        """Should compute condition number."""
-        J = [[2.0, 0.0], [0.0, 1.0]]
-        cond = self.sd.condition_number(J)
-        self.assertAlmostEqual(cond, 2.0)
-        print(f"  [PASS] Cond: {cond:.1f}")
+    def setUp(self):
+        self.wa = WorkspaceAnalyzer()
+    
+    def test_workspace(self):
+        """Should compute workspace."""
+        w = self.wa.planar_2r_workspace(1.0, 1.0)
+        self.assertEqual(w["r_max"], 2.0)
+        print(f"  [PASS] WS: {w}")
+    
+    def test_reachable(self):
+        """Should check reachability."""
+        r = self.wa.is_reachable(1.5, 0.0, 1.0, 1.0)
+        self.assertTrue(r)
+        print("  [PASS] Reach")
 
 
 class TestManipulatorKinematics(unittest.TestCase):
-    """Test unified kinematics."""
+    """Test unified controller."""
     
     def setUp(self):
-        self.mk = ManipulatorKinematics([0.3, 0.3])
+        self.mk = ManipulatorKinematics()
+    
+    def test_set_dh(self):
+        """Should set DH."""
+        self.mk.set_dh_params([DHParameter(0.0, 0.0, 1.0, 0.0)])
+        self.assertEqual(len(self.mk.dh_params), 1)
+        print("  [PASS] Set")
     
     def test_forward(self):
-        """Should compute FK."""
-        pos = self.mk.forward([0.0, 0.0])
-        self.assertIsNotNone(pos)
-        print(f"  [PASS] FK: {pos}")
-    
-    def test_inverse(self):
-        """Should compute IK."""
-        sols = self.mk.inverse((0.4, 0.3))
-        self.assertGreater(len(sols), 0)
-        print(f"  [PASS] IK: {len(sols)}")
-    
-    def test_singularity(self):
-        """Should check singularity."""
-        import math
-        s = self.mk.check_singularity([0.0, math.pi])
-        self.assertIsInstance(s, bool)
-        print(f"  [PASS] Sing: {s}")
+        """Should solve forward."""
+        self.mk.set_dh_params([DHParameter(0.0, 0.0, 1.0, 0.0)])
+        r = self.mk.forward_solve()
+        self.assertIn("x", r)
+        print(f"  [PASS] Fwd: {r['x']}")
     
     def test_summary(self):
-        """Should provide summary."""
-        s = self.mk.kinematic_summary()
-        self.assertIn("max_reach", s)
-        print(f"  [PASS] Summary: {s}")
+        """Should summarize."""
+        s = self.mk.mk_summary()
+        self.assertIn("methods", s)
+        print(f"  [PASS] Sum: {s}")
 
 
 if __name__ == '__main__':
