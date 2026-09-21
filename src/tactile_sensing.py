@@ -1,7 +1,7 @@
 """
 Tactile Sensing Module
-Pressure distribution, slip detection,
-texture classification, and grasp force estimation for autonomous robotics.
+Tactile array processing, slip detection from texture,
+force distribution estimation, and material identification for autonomous robotics.
 """
 
 import math
@@ -11,25 +11,26 @@ from dataclasses import dataclass
 
 @dataclass
 class TactileReading:
-    """Tactile sensor reading."""
-    x: float
-    y: float
-    pressure_kPa: float
+    """Single tactile sensor reading."""
+    x: int
+    y: int
+    pressure: float
     shear_x: float
     shear_y: float
 
 
-class PressureDistribution:
+class TactileArrayProcessing:
     """
-    Pressure distribution analysis.
+    Process tactile sensor arrays.
     """
     
-    def __init__(self, resolution: int = 10):
+    def __init__(self, width: int = 16, height: int = 16):
         """
         Args:
-            resolution: Grid resolution
+            width, height: Array dimensions
         """
-        self.res = resolution
+        self.width = width
+        self.height = height
     
     def total_force(self, readings: List[TactileReading]) -> float:
         """
@@ -39,11 +40,9 @@ class PressureDistribution:
             readings: Sensor readings
         
         Returns:
-            Total force in N (simplified: pressure * area)
+            Total force
         """
-        if not readings:
-            return 0.0
-        return sum(r.pressure_kPa for r in readings)
+        return sum(r.pressure for r in readings)
     
     def center_of_pressure(self, readings: List[TactileReading]) -> Tuple[float, float]:
         """
@@ -53,180 +52,177 @@ class PressureDistribution:
             readings: Sensor readings
         
         Returns:
-            (cop_x, cop_y)
+            (x, y) center
         """
-        if not readings:
-            return 0.0, 0.0
-        
-        total_p = sum(r.pressure_kPa for r in readings)
-        if total_p == 0:
-            return 0.0, 0.0
-        
-        cop_x = sum(r.x * r.pressure_kPa for r in readings) / total_p
-        cop_y = sum(r.y * r.pressure_kPa for r in readings) / total_p
-        return cop_x, cop_y
+        total = self.total_force(readings)
+        if total <= 0:
+            return (0.0, 0.0)
+        x = sum(r.x * r.pressure for r in readings) / total
+        y = sum(r.y * r.pressure for r in readings) / total
+        return (x, y)
     
     def pressure_map(self, readings: List[TactileReading]) -> List[List[float]]:
         """
-        Create pressure map grid.
+        Build pressure map.
         
         Args:
             readings: Sensor readings
         
         Returns:
-            2D pressure grid
+            2D pressure array
         """
-        grid = [[0.0 for _ in range(self.res)] for _ in range(self.res)]
-        
+        pmap = [[0.0] * self.width for _ in range(self.height)]
         for r in readings:
-            ix = min(int(r.x * self.res), self.res - 1)
-            iy = min(int(r.y * self.res), self.res - 1)
-            grid[iy][ix] += r.pressure_kPa
-        
-        return grid
+            if 0 <= r.x < self.width and 0 <= r.y < self.height:
+                pmap[r.y][r.x] = r.pressure
+        return pmap
 
 
-class SlipDetector:
+class SlipDetectionFromTexture:
     """
-    Slip detection from tactile data.
-    """
-    
-    def __init__(self, threshold: float = 0.5):
-        """
-        Args:
-            threshold: Slip detection threshold
-        """
-        self.threshold = threshold
-    
-    def shear_magnitude(self, reading: TactileReading) -> float:
-        """
-        Compute shear magnitude.
-        
-        Args:
-            reading: Tactile reading
-        
-        Returns:
-            Shear magnitude
-        """
-        return math.sqrt(reading.shear_x ** 2 + reading.shear_y ** 2)
-    
-    def is_slipping(self, reading: TactileReading) -> bool:
-        """
-        Detect slip.
-        
-        Args:
-            reading: Tactile reading
-        
-        Returns:
-            Whether slipping
-        """
-        return self.shear_magnitude(reading) > self.threshold
-    
-    def slip_ratio(self, readings: List[TactileReading]) -> float:
-        """
-        Compute ratio of slipping sensors.
-        
-        Args:
-            readings: Sensor readings
-        
-        Returns:
-            Slip ratio
-        """
-        if not readings:
-            return 0.0
-        slipping = sum(1 for r in readings if self.is_slipping(r))
-        return slipping / len(readings)
-
-
-class TextureClassifier:
-    """
-    Texture classification from tactile data.
+    Detect slip from tactile texture patterns.
     """
     
     def __init__(self):
         pass
     
-    def roughness_index(self, readings: List[TactileReading]) -> float:
+    def texture_variation(self, readings: List[TactileReading]) -> float:
         """
-        Compute roughness index from pressure variance.
+        Compute texture variation as slip indicator.
         
         Args:
             readings: Sensor readings
         
         Returns:
-            Roughness index
+            Variation measure
+        """
+        if len(readings) < 2:
+            return 0.0
+        mean_p = sum(r.pressure for r in readings) / len(readings)
+        var = sum((r.pressure - mean_p) ** 2 for r in readings) / len(readings)
+        return math.sqrt(var)
+    
+    def shear_magnitude(self, readings: List[TactileReading]) -> float:
+        """
+        Compute total shear magnitude.
+        
+        Args:
+            readings: Sensor readings
+        
+        Returns:
+            Shear magnitude
+        """
+        return math.sqrt(sum(r.shear_x**2 + r.shear_y**2 for r in readings))
+    
+    def is_slipping(self, readings: List[TactileReading],
+                   threshold: float = 5.0) -> bool:
+        """
+        Detect slip from readings.
+        
+        Args:
+            readings: Sensor readings
+            threshold: Slip threshold
+        
+        Returns:
+            True if slipping
+        """
+        shear = self.shear_magnitude(readings)
+        return shear > threshold
+
+
+class ForceDistributionEstimation:
+    """
+    Estimate force distribution from tactile data.
+    """
+    
+    def __init__(self):
+        pass
+    
+    def contact_area(self, readings: List[TactileReading],
+                    threshold: float = 0.1) -> int:
+        """
+        Count sensors in contact.
+        
+        Args:
+            readings: Sensor readings
+            threshold: Contact threshold
+        
+        Returns:
+            Number of active sensors
+        """
+        return sum(1 for r in readings if r.pressure > threshold)
+    
+    def average_pressure(self, readings: List[TactileReading]) -> float:
+        """
+        Compute average pressure.
+        
+        Args:
+            readings: Sensor readings
+        
+        Returns:
+            Average pressure
         """
         if not readings:
             return 0.0
-        
-        pressures = [r.pressure_kPa for r in readings]
-        mean_p = sum(pressures) / len(pressures)
-        variance = sum((p - mean_p) ** 2 for p in pressures) / len(pressures)
-        
-        return math.sqrt(variance)
+        return sum(r.pressure for r in readings) / len(readings)
     
-    def classify_texture(self, readings: List[TactileReading]) -> str:
+    def pressure_gradient(self, readings: List[TactileReading]) -> Tuple[float, float]:
         """
-        Classify surface texture.
+        Compute pressure gradient.
         
         Args:
             readings: Sensor readings
         
         Returns:
-            Texture class
+            (dx, dy) gradient
         """
-        roughness = self.roughness_index(readings)
-        if roughness < 0.5:
-            return "smooth"
-        elif roughness < 2.0:
-            return "moderate"
-        else:
-            return "rough"
+        if len(readings) < 2:
+            return (0.0, 0.0)
+        max_p = max(r.pressure for r in readings)
+        min_p = min(r.pressure for r in readings)
+        max_r = max(readings, key=lambda r: r.pressure)
+        min_r = min(readings, key=lambda r: r.pressure)
+        dx = max_r.x - min_r.x
+        dy = max_r.y - min_r.y
+        dist = math.sqrt(dx**2 + dy**2)
+        if dist <= 0:
+            return (0.0, 0.0)
+        return ((max_p - min_p) * dx / dist, (max_p - min_p) * dy / dist)
 
 
-class GraspForceEstimator:
+class MaterialIdentification:
     """
-    Grasp force estimation from tactile data.
+    Identify material from tactile properties.
     """
     
-    def __init__(self, friction_coefficient: float = 0.5):
-        """
-        Args:
-            friction_coefficient: Friction coefficient
-        """
-        self.mu = friction_coefficient
+    def __init__(self):
+        self.materials = {
+            "metal": {"hardness": 0.9, "roughness": 0.1},
+            "plastic": {"hardness": 0.5, "roughness": 0.3},
+            "rubber": {"hardness": 0.3, "roughness": 0.7},
+            "wood": {"hardness": 0.6, "roughness": 0.5},
+        }
     
-    def required_normal_force(self, object_weight_N: float,
-                             num_contact_points: int = 2) -> float:
+    def identify(self, hardness: float, roughness: float) -> str:
         """
-        Compute required normal force to prevent slip.
+        Identify material from properties.
         
         Args:
-            object_weight_N: Object weight
-            num_contact_points: Number of contacts
+            hardness: Hardness estimate (0-1)
+            roughness: Roughness estimate (0-1)
         
         Returns:
-            Required normal force per contact
+            Material name
         """
-        if num_contact_points <= 0 or self.mu <= 0:
-            return 0.0
-        return object_weight_N / (self.mu * num_contact_points)
-    
-    def safety_margin(self, actual_force_N: float,
-                     required_force_N: float) -> float:
-        """
-        Compute safety margin.
-        
-        Args:
-            actual_force_N: Actual force
-            required_force_N: Required force
-        
-        Returns:
-            Safety margin ratio
-        """
-        if required_force_N <= 0:
-            return 0.0
-        return actual_force_N / required_force_N
+        best_match = "unknown"
+        min_dist = float('inf')
+        for name, props in self.materials.items():
+            dist = math.sqrt((hardness - props["hardness"])**2 +
+                           (roughness - props["roughness"])**2)
+            if dist < min_dist:
+                min_dist = dist
+                best_match = name
+        return best_match
 
 
 class TactileSensing:
@@ -235,14 +231,14 @@ class TactileSensing:
     """
     
     def __init__(self):
-        self.pressure = PressureDistribution()
-        self.slip = SlipDetector()
-        self.texture = TextureClassifier()
-        self.grasp = GraspForceEstimator()
+        self.array = TactileArrayProcessing()
+        self.slip = SlipDetectionFromTexture()
+        self.force = ForceDistributionEstimation()
+        self.material = MaterialIdentification()
     
     def tactile_summary(self) -> Dict:
         """Get summary."""
         return {
-            "capabilities": ["pressure", "slip", "texture", "grasp_force"],
-            "applications": ["grasping", "manipulation", "exploration"]
+            "methods": ["array_processing", "slip_detection", "force_distribution", "material_id"],
+            "outputs": ["total_force", "center_of_pressure", "slip_status", "material"]
         }

@@ -8,108 +8,112 @@ import os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from tactile_sensing import (TactileReading, PressureDistribution,
-                             SlipDetector,
-                             TextureClassifier,
-                             GraspForceEstimator,
+from tactile_sensing import (TactileReading, TactileArrayProcessing,
+                             SlipDetectionFromTexture,
+                             ForceDistributionEstimation,
+                             MaterialIdentification,
                              TactileSensing)
 
 
-class TestPressureDistribution(unittest.TestCase):
-    """Test pressure."""
+class TestTactileArrayProcessing(unittest.TestCase):
+    """Test array."""
     
     def setUp(self):
-        self.pd = PressureDistribution(5)
-        self.readings = [
-            TactileReading(0.2, 0.3, 10.0, 0.1, 0.1),
-            TactileReading(0.5, 0.5, 20.0, 0.2, 0.0),
-            TactileReading(0.8, 0.7, 15.0, 0.0, 0.1)
-        ]
+        self.tap = TactileArrayProcessing()
+        self.readings = [TactileReading(0, 0, 1.0, 0.0, 0.0),
+                         TactileReading(1, 0, 2.0, 0.0, 0.0),
+                         TactileReading(0, 1, 0.5, 0.0, 0.0)]
     
-    def test_total_force(self):
+    def test_force(self):
         """Should compute total force."""
-        F = self.pd.total_force(self.readings)
-        self.assertEqual(F, 45.0)
-        print(f"  [PASS] F: {F:.1f}")
+        f = self.tap.total_force(self.readings)
+        self.assertEqual(f, 3.5)
+        print(f"  [PASS] F: {f:.1f}")
     
     def test_cop(self):
-        """Should compute COP."""
-        cop = self.pd.center_of_pressure(self.readings)
-        self.assertIsNotNone(cop)
-        print(f"  [PASS] COP: ({cop[0]:.2f}, {cop[1]:.2f})")
+        """Should compute center of pressure."""
+        c = self.tap.center_of_pressure(self.readings)
+        self.assertAlmostEqual(c[0], (0*1.0 + 1*2.0 + 0*0.5) / 3.5, delta=1e-10)
+        print(f"  [PASS] CoP: {c}")
     
     def test_map(self):
-        """Should create map."""
-        m = self.pd.pressure_map(self.readings)
-        self.assertEqual(len(m), 5)
-        print("  [PASS] Map")
+        """Should build pressure map."""
+        m = self.tap.pressure_map(self.readings)
+        self.assertEqual(m[0][0], 1.0)
+        print(f"  [PASS] Map: {len(m)}x{len(m[0])}")
 
 
-class TestSlipDetector(unittest.TestCase):
+class TestSlipDetectionFromTexture(unittest.TestCase):
     """Test slip."""
     
     def setUp(self):
-        self.sd = SlipDetector(0.5)
+        self.sdft = SlipDetectionFromTexture()
+    
+    def test_variation(self):
+        """Should compute variation."""
+        r = [TactileReading(0, 0, 1.0, 0.0, 0.0),
+             TactileReading(1, 0, 3.0, 0.0, 0.0)]
+        v = self.sdft.texture_variation(r)
+        self.assertGreater(v, 0)
+        print(f"  [PASS] Var: {v:.2f}")
     
     def test_shear(self):
         """Should compute shear."""
-        s = self.sd.shear_magnitude(TactileReading(0.0, 0.0, 10.0, 0.3, 0.4))
-        self.assertAlmostEqual(s, 0.5, delta=0.01)
-        print(f"  [PASS] Shear: {s:.3f}")
+        r = [TactileReading(0, 0, 1.0, 3.0, 4.0)]
+        s = self.sdft.shear_magnitude(r)
+        self.assertEqual(s, 5.0)
+        print(f"  [PASS] Shear: {s:.1f}")
     
     def test_slip(self):
         """Should detect slip."""
-        self.assertTrue(self.sd.is_slipping(TactileReading(0.0, 0.0, 10.0, 0.5, 0.5)))
-        print("  [PASS] Slip")
-    
-    def test_ratio(self):
-        """Should compute ratio."""
-        r = [TactileReading(0.0, 0.0, 10.0, 0.6, 0.0),
-             TactileReading(0.0, 0.0, 10.0, 0.0, 0.0)]
-        ratio = self.sd.slip_ratio(r)
-        self.assertEqual(ratio, 0.5)
-        print(f"  [PASS] Ratio: {ratio:.2f}")
+        r = [TactileReading(0, 0, 1.0, 3.0, 4.0)]
+        s = self.sdft.is_slipping(r, threshold=4.0)
+        self.assertTrue(s)
+        print(f"  [PASS] Slip: {s}")
 
 
-class TestTextureClassifier(unittest.TestCase):
-    """Test texture."""
+class TestForceDistributionEstimation(unittest.TestCase):
+    """Test force."""
     
     def setUp(self):
-        self.tc = TextureClassifier()
+        self.fde = ForceDistributionEstimation()
     
-    def test_roughness(self):
-        """Should compute roughness."""
-        r = [TactileReading(0.0, 0.0, 5.0, 0.0, 0.0),
-             TactileReading(0.0, 0.0, 15.0, 0.0, 0.0)]
-        rough = self.tc.roughness_index(r)
-        self.assertGreater(rough, 0)
-        print(f"  [PASS] R: {rough:.2f}")
+    def test_area(self):
+        """Should compute contact area."""
+        r = [TactileReading(0, 0, 1.0, 0.0, 0.0),
+             TactileReading(1, 0, 0.05, 0.0, 0.0)]
+        a = self.fde.contact_area(r)
+        self.assertEqual(a, 1)
+        print(f"  [PASS] Area: {a}")
     
-    def test_classify(self):
-        """Should classify."""
-        r = [TactileReading(0.0, 0.0, 10.0, 0.0, 0.0)]
-        c = self.tc.classify_texture(r)
-        self.assertEqual(c, "smooth")
-        print(f"  [PASS] Tex: {c}")
+    def test_avg(self):
+        """Should compute average."""
+        r = [TactileReading(0, 0, 1.0, 0.0, 0.0),
+             TactileReading(1, 0, 3.0, 0.0, 0.0)]
+        a = self.fde.average_pressure(r)
+        self.assertEqual(a, 2.0)
+        print(f"  [PASS] Avg: {a:.1f}")
+    
+    def test_gradient(self):
+        """Should compute gradient."""
+        r = [TactileReading(0, 0, 1.0, 0.0, 0.0),
+             TactileReading(3, 4, 5.0, 0.0, 0.0)]
+        g = self.fde.pressure_gradient(r)
+        self.assertGreater(g[0], 0)
+        print(f"  [PASS] Grad: {g}")
 
 
-class TestGraspForceEstimator(unittest.TestCase):
-    """Test grasp."""
+class TestMaterialIdentification(unittest.TestCase):
+    """Test material."""
     
     def setUp(self):
-        self.gf = GraspForceEstimator(0.5)
+        self.mi = MaterialIdentification()
     
-    def test_required(self):
-        """Should compute required force."""
-        F = self.gf.required_normal_force(10.0, 2)
-        self.assertEqual(F, 10.0)
-        print(f"  [PASS] Freq: {F:.2f} N")
-    
-    def test_margin(self):
-        """Should compute margin."""
-        m = self.gf.safety_margin(15.0, 10.0)
-        self.assertEqual(m, 1.5)
-        print(f"  [PASS] Margin: {m:.2f}")
+    def test_id(self):
+        """Should identify."""
+        m = self.mi.identify(0.9, 0.1)
+        self.assertEqual(m, "metal")
+        print(f"  [PASS] Mat: {m}")
 
 
 class TestTactileSensing(unittest.TestCase):
@@ -121,7 +125,7 @@ class TestTactileSensing(unittest.TestCase):
     def test_summary(self):
         """Should summarize."""
         s = self.ts.tactile_summary()
-        self.assertIn("capabilities", s)
+        self.assertIn("methods", s)
         print(f"  [PASS] Sum: {s}")
 
 
