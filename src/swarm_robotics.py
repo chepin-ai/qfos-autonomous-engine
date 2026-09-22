@@ -1,42 +1,43 @@
 """
 Swarm Robotics Module
-Flocking, consensus, task allocation,
-coverage control, and formation control for autonomous multi-robot systems.
+Boid flocking, consensus algorithms,
+task allocation, and formation control for autonomous robotics.
 """
 
 import math
-import random
 from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass
 
 
 @dataclass
 class RobotState:
-    """Robot position and velocity."""
+    """Robot state in 2D."""
     x: float
     y: float
     vx: float
     vy: float
-    id: int = 0
 
 
-class FlockingBehavior:
+class BoidFlocking:
     """
-    Reynolds flocking behavior.
+    Reynolds boid flocking behavior.
     """
     
-    def __init__(self, separation_radius: float = 2.0,
-                 alignment_radius: float = 5.0,
-                 cohesion_radius: float = 5.0):
+    def __init__(self, separation_weight: float = 1.5,
+                 alignment_weight: float = 1.0,
+                 cohesion_weight: float = 1.0,
+                 neighbor_radius: float = 5.0):
         """
         Args:
-            separation_radius: Separation radius
-            alignment_radius: Alignment radius
-            cohesion_radius: Cohesion radius
+            separation_weight: Separation coefficient
+            alignment_weight: Alignment coefficient
+            cohesion_weight: Cohesion coefficient
+            neighbor_radius: Perception radius
         """
-        self.r_sep = separation_radius
-        self.r_ali = alignment_radius
-        self.r_coh = cohesion_radius
+        self.w_sep = separation_weight
+        self.w_ali = alignment_weight
+        self.w_coh = cohesion_weight
+        self.radius = neighbor_radius
     
     def separation(self, robot: RobotState,
                   neighbors: List[RobotState]) -> Tuple[float, float]:
@@ -45,23 +46,25 @@ class FlockingBehavior:
         
         Args:
             robot: Current robot
-            neighbors: Nearby robots
+            neighbors: Neighboring robots
         
         Returns:
-            (fx, fy) separation force
+            (fx, fy) force
         """
         fx, fy = 0.0, 0.0
         count = 0
         for n in neighbors:
-            d = math.sqrt((robot.x - n.x)**2 + (robot.y - n.y)**2)
-            if 0 < d < self.r_sep:
-                fx += (robot.x - n.x) / d
-                fy += (robot.y - n.y) / d
+            dx = robot.x - n.x
+            dy = robot.y - n.y
+            dist = math.sqrt(dx**2 + dy**2)
+            if 0 < dist < self.radius:
+                fx += dx / dist
+                fy += dy / dist
                 count += 1
         if count > 0:
-            fx /= count
-            fy /= count
-        return fx, fy
+            fx = fx / count * self.w_sep
+            fy = fy / count * self.w_sep
+        return (fx, fy)
     
     def alignment(self, robot: RobotState,
                  neighbors: List[RobotState]) -> Tuple[float, float]:
@@ -70,23 +73,25 @@ class FlockingBehavior:
         
         Args:
             robot: Current robot
-            neighbors: Nearby robots
+            neighbors: Neighboring robots
         
         Returns:
-            (fx, fy) alignment force
+            (fx, fy) force
         """
         fx, fy = 0.0, 0.0
         count = 0
         for n in neighbors:
-            d = math.sqrt((robot.x - n.x)**2 + (robot.y - n.y)**2)
-            if 0 < d < self.r_ali:
-                fx += n.vx
-                fy += n.vy
+            dx = n.x - robot.x
+            dy = n.y - robot.y
+            dist = math.sqrt(dx**2 + dy**2)
+            if dist < self.radius:
+                fx += n.vx - robot.vx
+                fy += n.vy - robot.vy
                 count += 1
         if count > 0:
-            fx = fx / count - robot.vx
-            fy = fy / count - robot.vy
-        return fx, fy
+            fx = fx / count * self.w_ali
+            fy = fy / count * self.w_ali
+        return (fx, fy)
     
     def cohesion(self, robot: RobotState,
                 neighbors: List[RobotState]) -> Tuple[float, float]:
@@ -95,182 +100,212 @@ class FlockingBehavior:
         
         Args:
             robot: Current robot
-            neighbors: Nearby robots
+            neighbors: Neighboring robots
         
         Returns:
-            (fx, fy) cohesion force
+            (fx, fy) force
         """
-        fx, fy = 0.0, 0.0
+        cx, cy = 0.0, 0.0
         count = 0
         for n in neighbors:
-            d = math.sqrt((robot.x - n.x)**2 + (robot.y - n.y)**2)
-            if 0 < d < self.r_coh:
-                fx += n.x
-                fy += n.y
+            dx = n.x - robot.x
+            dy = n.y - robot.y
+            dist = math.sqrt(dx**2 + dy**2)
+            if dist < self.radius:
+                cx += n.x
+                cy += n.y
                 count += 1
         if count > 0:
-            fx = fx / count - robot.x
-            fy = fy / count - robot.y
-        return fx, fy
+            cx /= count
+            cy /= count
+            return ((cx - robot.x) * self.w_coh / count,
+                    (cy - robot.y) * self.w_coh / count)
+        return (0.0, 0.0)
+    
+    def flocking_velocity(self, robot: RobotState,
+                         neighbors: List[RobotState],
+                         max_speed: float = 2.0) -> Tuple[float, float]:
+        """
+        Compute flocking velocity.
+        
+        Args:
+            robot: Current robot
+            neighbors: Neighbors
+            max_speed: Speed limit
+        
+        Returns:
+            (vx, vy)
+        """
+        sep = self.separation(robot, neighbors)
+        ali = self.alignment(robot, neighbors)
+        coh = self.cohesion(robot, neighbors)
+        vx = robot.vx + sep[0] + ali[0] + coh[0]
+        vy = robot.vy + sep[1] + ali[1] + coh[1]
+        speed = math.sqrt(vx**2 + vy**2)
+        if speed > max_speed and speed > 0:
+            vx = vx / speed * max_speed
+            vy = vy / speed * max_speed
+        return (vx, vy)
 
 
-class ConsensusAlgorithm:
+class ConsensusAlgorithms:
     """
-    Distributed consensus for multi-agent systems.
+    Distributed consensus algorithms.
     """
     
     def __init__(self):
         pass
     
     def average_consensus(self, values: List[float],
-                         adjacency: List[List[float]],
-                         steps: int = 10) -> List[float]:
+                         adjacency: List[List[int]],
+                         iterations: int = 10) -> List[float]:
         """
-        Compute average consensus.
+        Run average consensus.
         
         Args:
             values: Initial values
-            adjacency: Adjacency matrix
-            steps: Iteration steps
+            adjacency: Network adjacency
+            iterations: Iterations
         
         Returns:
             Final values
         """
-        n = len(values)
-        x = values.copy()
-        for _ in range(steps):
-            new_x = x.copy()
+        if not values:
+            return []
+        current = list(values)
+        n = len(current)
+        for _ in range(iterations):
+            new_values = []
             for i in range(n):
-                for j in range(n):
-                    if adjacency[i][j] > 0:
-                        new_x[i] += 0.1 * adjacency[i][j] * (x[j] - x[i])
-            x = new_x
-        return x
+                neighbor_sum = sum(current[j] for j in range(n) if adjacency[i][j] == 1)
+                degree = sum(adjacency[i])
+                if degree > 0:
+                    new_values.append((current[i] + neighbor_sum) / (degree + 1))
+                else:
+                    new_values.append(current[i])
+            current = new_values
+        return current
     
-    def consensus_error(self, values: List[float]) -> float:
+    def consensus_value(self, values: List[float]) -> float:
         """
-        Compute deviation from consensus.
+        Compute theoretical consensus value.
         
         Args:
-            values: Current values
+            values: Values
         
         Returns:
-            Maximum deviation
+            Average
         """
         if not values:
             return 0.0
-        mean = sum(values) / len(values)
-        return max(abs(v - mean) for v in values)
+        return sum(values) / len(values)
 
 
-class CoverageControl:
+class TaskAllocation:
     """
-    Voronoi-based coverage control.
+    Multi-robot task allocation.
     """
     
     def __init__(self):
         pass
     
-    def voronoi_cell_area(self, robot: RobotState,
-                         neighbors: List[RobotState],
-                         boundary: List[Tuple[float, float]]) -> float:
+    def greedy_allocation(self, robots: List[RobotState],
+                         tasks: List[Tuple[float, float]]) -> Dict[int, int]:
         """
-        Estimate Voronoi cell area (simplified).
+        Greedy nearest-task allocation.
         
         Args:
-            robot: Robot position
-            neighbors: Neighbor positions
-            boundary: Environment boundary
+            robots: Robot states
+            tasks: Task positions
         
         Returns:
-            Cell area
+            Robot -> task mapping
         """
-        if not boundary:
-            return 0.0
-        # Simplified: half of total area per robot
-        total_area = self._polygon_area(boundary)
-        return total_area / (len(neighbors) + 1)
+        allocation = {}
+        assigned_tasks = set()
+        for i, robot in enumerate(robots):
+            best_task = -1
+            best_dist = float('inf')
+            for j, task in enumerate(tasks):
+                if j in assigned_tasks:
+                    continue
+                dist = math.sqrt((robot.x - task[0])**2 + (robot.y - task[1])**2)
+                if dist < best_dist:
+                    best_dist = dist
+                    best_task = j
+            if best_task >= 0:
+                allocation[i] = best_task
+                assigned_tasks.add(best_task)
+        return allocation
     
-    def _polygon_area(self, vertices: List[Tuple[float, float]]) -> float:
-        """Compute polygon area."""
-        n = len(vertices)
-        area = 0.0
-        for i in range(n):
-            j = (i + 1) % n
-            area += vertices[i][0] * vertices[j][1]
-            area -= vertices[j][0] * vertices[i][1]
-        return abs(area) / 2.0
-    
-    def coverage_objective(self, robot_positions: List[RobotState],
-                          target_density: float = 1.0) -> float:
+    def total_travel_distance(self, robots: List[RobotState],
+                             allocation: Dict[int, int],
+                             tasks: List[Tuple[float, float]]) -> float:
         """
-        Compute coverage objective (simplified).
+        Compute total travel distance.
         
         Args:
-            robot_positions: Robot positions
-            target_density: Target density
+            robots: Robot states
+            allocation: Allocation
+            tasks: Task positions
         
         Returns:
-            Coverage metric
+            Total distance
         """
-        if not robot_positions:
-            return 0.0
-        # Simplified: average distance to neighbors
-        total_dist = 0.0
-        count = 0
-        for i, r1 in enumerate(robot_positions):
-            for r2 in robot_positions[i+1:]:
-                d = math.sqrt((r1.x - r2.x)**2 + (r1.y - r2.y)**2)
-                total_dist += d
-                count += 1
-        if count == 0:
-            return 0.0
-        return total_dist / count
+        total = 0.0
+        for robot_idx, task_idx in allocation.items():
+            robot = robots[robot_idx]
+            task = tasks[task_idx]
+            total += math.sqrt((robot.x - task[0])**2 + (robot.y - task[1])**2)
+        return total
 
 
 class FormationControl:
     """
-    Formation keeping for multi-robot teams.
+    Formation control for robot swarms.
     """
     
     def __init__(self):
         pass
     
-    def formation_error(self, positions: List[RobotState],
-                       desired_distances: Dict[Tuple[int, int], float]) -> float:
+    def desired_position(self, center: Tuple[float, float],
+                        formation_angle: float,
+                        radius: float,
+                        robot_index: int,
+                        total_robots: int) -> Tuple[float, float]:
         """
-        Compute formation error.
+        Compute desired position in circular formation.
         
         Args:
-            positions: Robot positions
-            desired_distances: Desired inter-robot distances
+            center: Formation center
+            formation_angle: Starting angle
+            radius: Formation radius
+            robot_index: Robot index
+            total_robots: Total robots
         
         Returns:
-            Formation error
+            (x, y) desired position
         """
-        error = 0.0
-        for (i, j), d_desired in desired_distances.items():
-            if i < len(positions) and j < len(positions):
-                d_actual = math.sqrt((positions[i].x - positions[j].x)**2 +
-                                    (positions[i].y - positions[j].y)**2)
-                error += (d_actual - d_desired) ** 2
-        return math.sqrt(error)
+        if total_robots <= 0:
+            return center
+        angle = formation_angle + 2.0 * math.pi * robot_index / total_robots
+        x = center[0] + radius * math.cos(angle)
+        y = center[1] + radius * math.sin(angle)
+        return (x, y)
     
-    def desired_position(self, leader: RobotState,
-                        offset_x: float,
-                        offset_y: float) -> Tuple[float, float]:
+    def formation_error(self, robot: RobotState,
+                       desired: Tuple[float, float]) -> float:
         """
-        Compute follower desired position.
+        Compute distance to desired position.
         
         Args:
-            leader: Leader position
-            offset_x: X offset
-            offset_y: Y offset
+            robot: Robot state
+            desired: Desired position
         
         Returns:
-            Desired (x, y)
+            Error distance
         """
-        return leader.x + offset_x, leader.y + offset_y
+        return math.sqrt((robot.x - desired[0])**2 + (robot.y - desired[1])**2)
 
 
 class SwarmRobotics:
@@ -279,14 +314,14 @@ class SwarmRobotics:
     """
     
     def __init__(self):
-        self.flocking = FlockingBehavior()
-        self.consensus = ConsensusAlgorithm()
-        self.coverage = CoverageControl()
+        self.flocking = BoidFlocking()
+        self.consensus = ConsensusAlgorithms()
+        self.task = TaskAllocation()
         self.formation = FormationControl()
     
     def swarm_summary(self) -> Dict:
         """Get summary."""
         return {
-            "behaviors": ["flocking", "consensus", "coverage", "formation"],
-            "coordination": ["distributed", "decentralized"]
+            "behaviors": ["flocking", "consensus", "task_allocation", "formation"],
+            "outputs": ["velocity", "consensus_value", "allocation", "formation_error"]
         }

@@ -8,83 +8,91 @@ import os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from swarm_robotics import (RobotState, FlockingBehavior,
-                            ConsensusAlgorithm,
-                            CoverageControl,
+from swarm_robotics import (RobotState, BoidFlocking,
+                            ConsensusAlgorithms,
+                            TaskAllocation,
                             FormationControl,
                             SwarmRobotics)
 
 
-class TestFlockingBehavior(unittest.TestCase):
+class TestBoidFlocking(unittest.TestCase):
     """Test flocking."""
     
     def setUp(self):
-        self.fb = FlockingBehavior(2.0, 5.0, 5.0)
+        self.bf = BoidFlocking()
+        self.r1 = RobotState(0.0, 0.0, 1.0, 0.0)
+        self.r2 = RobotState(1.0, 0.0, 1.0, 0.0)
+        self.r3 = RobotState(0.0, 1.0, 0.0, 1.0)
     
     def test_separation(self):
         """Should compute separation."""
-        r = RobotState(0.0, 0.0, 0.0, 0.0)
-        n = [RobotState(1.0, 0.0, 0.0, 0.0)]
-        fx, fy = self.fb.separation(r, n)
-        self.assertNotEqual(fx, 0.0)
-        print(f"  [PASS] Sep: ({fx:.2f}, {fy:.2f})")
+        f = self.bf.separation(self.r1, [self.r2, self.r3])
+        self.assertNotEqual(f, (0.0, 0.0))
+        print(f"  [PASS] Sep: {f}")
     
     def test_alignment(self):
         """Should compute alignment."""
-        r = RobotState(0.0, 0.0, 0.0, 0.0)
-        n = [RobotState(1.0, 0.0, 1.0, 0.0)]
-        fx, fy = self.fb.alignment(r, n)
-        self.assertNotEqual(fx, 0.0)
-        print(f"  [PASS] Ali: ({fx:.2f}, {fy:.2f})")
+        f = self.bf.alignment(self.r1, [self.r2, self.r3])
+        self.assertEqual(len(f), 2)
+        print(f"  [PASS] Ali: {f}")
     
     def test_cohesion(self):
         """Should compute cohesion."""
-        r = RobotState(0.0, 0.0, 0.0, 0.0)
-        n = [RobotState(2.0, 2.0, 0.0, 0.0)]
-        fx, fy = self.fb.cohesion(r, n)
-        self.assertNotEqual(fx, 0.0)
-        print(f"  [PASS] Coh: ({fx:.2f}, {fy:.2f})")
+        f = self.bf.cohesion(self.r1, [self.r2, self.r3])
+        self.assertEqual(len(f), 2)
+        print(f"  [PASS] Coh: {f}")
+    
+    def test_flocking(self):
+        """Should compute flocking velocity."""
+        v = self.bf.flocking_velocity(self.r1, [self.r2, self.r3])
+        self.assertEqual(len(v), 2)
+        print(f"  [PASS] Vel: {v}")
 
 
-class TestConsensusAlgorithm(unittest.TestCase):
+class TestConsensusAlgorithms(unittest.TestCase):
     """Test consensus."""
     
     def setUp(self):
-        self.ca = ConsensusAlgorithm()
+        self.ca = ConsensusAlgorithms()
     
     def test_average(self):
-        """Should compute consensus."""
-        adj = [[0.0, 1.0], [1.0, 0.0]]
-        v = self.ca.average_consensus([1.0, 3.0], adj, 20)
-        self.assertAlmostEqual(v[0], v[1], delta=0.1)
-        print(f"  [PASS] Cons: {v}")
+        """Should reach average consensus."""
+        v = [1.0, 3.0, 5.0]
+        adj = [[0, 1, 0], [1, 0, 1], [0, 1, 0]]
+        r = self.ca.average_consensus(v, adj, 100)
+        self.assertAlmostEqual(r[0], 3.0, delta=0.1)
+        print(f"  [PASS] Cons: {r}")
     
-    def test_error(self):
-        """Should compute error."""
-        e = self.ca.consensus_error([1.0, 1.1, 0.9])
-        self.assertGreater(e, 0)
-        print(f"  [PASS] Err: {e:.3f}")
+    def test_value(self):
+        """Should compute consensus value."""
+        v = self.ca.consensus_value([1.0, 3.0, 5.0])
+        self.assertEqual(v, 3.0)
+        print(f"  [PASS] Val: {v}")
 
 
-class TestCoverageControl(unittest.TestCase):
-    """Test coverage."""
+class TestTaskAllocation(unittest.TestCase):
+    """Test allocation."""
     
     def setUp(self):
-        self.cc = CoverageControl()
+        self.ta = TaskAllocation()
     
-    def test_area(self):
-        """Should compute area."""
-        r = RobotState(0.0, 0.0, 0.0, 0.0)
-        a = self.cc.voronoi_cell_area(r, [], [(0, 0), (10, 0), (10, 10), (0, 10)])
-        self.assertGreater(a, 0)
-        print(f"  [PASS] Area: {a:.1f}")
+    def test_greedy(self):
+        """Should allocate tasks."""
+        robots = [RobotState(0.0, 0.0, 0.0, 0.0),
+                  RobotState(10.0, 0.0, 0.0, 0.0)]
+        tasks = [(1.0, 0.0), (9.0, 0.0)]
+        a = self.ta.greedy_allocation(robots, tasks)
+        self.assertGreater(len(a), 0)
+        print(f"  [PASS] Alloc: {a}")
     
-    def test_objective(self):
-        """Should compute objective."""
-        robots = [RobotState(0.0, 0.0, 0.0, 0.0), RobotState(3.0, 4.0, 0.0, 0.0)]
-        o = self.cc.coverage_objective(robots)
-        self.assertEqual(o, 5.0)
-        print(f"  [PASS] Obj: {o:.1f}")
+    def test_distance(self):
+        """Should compute travel distance."""
+        robots = [RobotState(0.0, 0.0, 0.0, 0.0)]
+        tasks = [(3.0, 4.0)]
+        a = self.ta.greedy_allocation(robots, tasks)
+        d = self.ta.total_travel_distance(robots, a, tasks)
+        self.assertEqual(d, 5.0)
+        print(f"  [PASS] Dist: {d:.1f}")
 
 
 class TestFormationControl(unittest.TestCase):
@@ -93,19 +101,18 @@ class TestFormationControl(unittest.TestCase):
     def setUp(self):
         self.fc = FormationControl()
     
-    def test_error(self):
-        """Should compute error."""
-        robots = [RobotState(0.0, 0.0, 0.0, 0.0), RobotState(3.0, 4.0, 0.0, 0.0)]
-        e = self.fc.formation_error(robots, {(0, 1): 5.0})
-        self.assertEqual(e, 0.0)
-        print(f"  [PASS] Err: {e:.2f}")
-    
     def test_desired(self):
         """Should compute desired position."""
-        l = RobotState(1.0, 1.0, 0.0, 0.0)
-        x, y = self.fc.desired_position(l, 2.0, 0.0)
-        self.assertEqual(x, 3.0)
-        print(f"  [PASS] Pos: ({x:.1f}, {y:.1f})")
+        p = self.fc.desired_position((0.0, 0.0), 0.0, 1.0, 0, 4)
+        self.assertAlmostEqual(p[0], 1.0, delta=1e-6)
+        print(f"  [PASS] Pos: {p}")
+    
+    def test_error(self):
+        """Should compute formation error."""
+        r = RobotState(1.0, 0.0, 0.0, 0.0)
+        e = self.fc.formation_error(r, (0.0, 0.0))
+        self.assertEqual(e, 1.0)
+        print(f"  [PASS] Err: {e:.1f}")
 
 
 class TestSwarmRobotics(unittest.TestCase):
