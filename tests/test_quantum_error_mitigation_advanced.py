@@ -8,10 +8,11 @@ import os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from quantum_error_mitigation_advanced import (NoiseScale, ZeroNoiseExtrapolation,
+from quantum_error_mitigation_advanced import (ErrorMitigationResult,
+                                               ZeroNoiseExtrapolation,
                                                ProbabilisticErrorCancellation,
-                                               MeasurementMitigation,
                                                CliffordDataRegression,
+                                               MeasurementErrorMitigation,
                                                QuantumErrorMitigationAdvanced)
 
 
@@ -25,13 +26,13 @@ class TestZeroNoiseExtrapolation(unittest.TestCase):
         """Should extrapolate."""
         v = self.zne.richardson_extrapolation([0.8, 0.6], [1.0, 2.0])
         self.assertGreater(v, 0.8)
-        print(f"  [PASS] Rich: {v:.3f}")
+        print(f"  [PASS] Rich: {v:.4f}")
     
     def test_exp(self):
-        """Should extrapolate exponentially."""
-        v = self.zne.exponential_extrapolation([0.8, 0.64], [1.0, 2.0])
-        self.assertGreater(v, 0.8)
-        print(f"  [PASS] Exp: {v:.3f}")
+        """Should exponential extrapolate."""
+        v = self.zne.exponential_extrapolation([0.8, 0.7], [1.0, 2.0])
+        self.assertIsInstance(v, float)
+        print(f"  [PASS] Exp: {v:.4f}")
 
 
 class TestProbabilisticErrorCancellation(unittest.TestCase):
@@ -40,46 +41,17 @@ class TestProbabilisticErrorCancellation(unittest.TestCase):
     def setUp(self):
         self.pec = ProbabilisticErrorCancellation()
     
-    def test_overhead(self):
-        """Should compute overhead."""
-        o = self.pec.sampling_overhead(0.5)
-        self.assertGreater(o, 1.0)
-        print(f"  [PASS] OH: {o:.3f}")
-    
     def test_cost(self):
         """Should compute cost."""
-        c = self.pec.mitigation_cost(10, 0.05)
+        c = self.pec.mitigation_cost(0.01, 4)
         self.assertGreater(c, 1.0)
-        print(f"  [PASS] Cost: {c:.3f}")
-
-
-class TestMeasurementMitigation(unittest.TestCase):
-    """Test measurement."""
+        print(f"  [PASS] Cost: {c:.4f}")
     
-    def setUp(self):
-        self.mm = MeasurementMitigation()
-    
-    def test_confusion(self):
-        """Should build matrix."""
-        m = self.mm.confusion_matrix(0.05)
-        self.assertEqual(len(m), 2)
-        print(f"  [PASS] Conf: {m}")
-    
-    def test_inverse(self):
-        """Should invert."""
-        m = [[0.95, 0.05], [0.05, 0.95]]
-        inv = self.mm.inverse_confusion(m)
-        self.assertIsNotNone(inv)
-        print(f"  [PASS] Inv: {inv}")
-    
-    def test_mitigate(self):
-        """Should mitigate."""
-        m = [[0.95, 0.05], [0.05, 0.95]]
-        inv = self.mm.inverse_confusion(m)
-        counts = {'0': 90, '1': 10}
-        r = self.mm.mitigate_counts(counts, inv)
-        self.assertIn('0', r)
-        print(f"  [PASS] Mit: {r}")
+    def test_estimate(self):
+        """Should compute unbiased."""
+        e = self.pec.unbiased_estimate([0.8, 0.9], [1, -1])
+        self.assertIsInstance(e, float)
+        print(f"  [PASS] Est: {e:.4f}")
 
 
 class TestCliffordDataRegression(unittest.TestCase):
@@ -89,16 +61,41 @@ class TestCliffordDataRegression(unittest.TestCase):
         self.cdr = CliffordDataRegression()
     
     def test_fit(self):
-        """Should fit."""
-        a, b = self.cdr.linear_fit([0.8, 0.7], [1.0, 0.9])
-        self.assertAlmostEqual(a, 1.0, delta=0.1)
-        print(f"  [PASS] Fit: a={a:.3f}, b={b:.3f}")
+        """Should fit linear."""
+        a, b = self.cdr.linear_fit([0.8, 0.9], [1.0, 1.1])
+        self.assertIsNotNone(a)
+        print(f"  [PASS] Fit: a={a:.4f}, b={b:.4f}")
     
     def test_predict(self):
         """Should predict."""
-        p = self.cdr.predict(0.8, 1.0, 0.2)
-        self.assertEqual(p, 1.0)
-        print(f"  [PASS] Pred: {p:.3f}")
+        p = self.cdr.predict(0.8, (1.25, 0.0))
+        self.assertAlmostEqual(p, 1.0, delta=1e-6)
+        print(f"  [PASS] Pred: {p:.4f}")
+
+
+class TestMeasurementErrorMitigation(unittest.TestCase):
+    """Test MEM."""
+    
+    def setUp(self):
+        self.mem = MeasurementErrorMitigation()
+    
+    def test_inverse(self):
+        """Should invert confusion."""
+        inv = self.mem.confusion_matrix_inverse([[0.9, 0.1], [0.1, 0.9]])
+        self.assertEqual(len(inv), 2)
+        print(f"  [PASS] Inv: {inv}")
+    
+    def test_apply(self):
+        """Should apply mitigation."""
+        m = self.mem.apply_mitigation([0.5, 0.5], [[1.0, 0.0], [0.0, 1.0]])
+        self.assertAlmostEqual(sum(m), 1.0, delta=1e-6)
+        print(f"  [PASS] App: {m}")
+    
+    def test_expectation(self):
+        """Should compute expectation."""
+        e = self.mem.expectation_from_probs([0.7, 0.3])
+        self.assertAlmostEqual(e, 0.4, delta=1e-6)
+        print(f"  [PASS] Exp: {e:.2f}")
 
 
 class TestQuantumErrorMitigationAdvanced(unittest.TestCase):

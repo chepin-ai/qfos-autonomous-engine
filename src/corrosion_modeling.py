@@ -1,7 +1,7 @@
 """
 Corrosion Modeling Module
-Pitting corrosion, galvanic corrosion,
-passivation kinetics, and corrosion rate prediction for autonomous materials engineering.
+Electrochemical corrosion, polarization curves,
+corrosion rate prediction, and protection design for autonomous materials engineering.
 """
 
 import math
@@ -10,208 +10,279 @@ from dataclasses import dataclass
 
 
 @dataclass
-class CorrosionEnvironment:
-    """Environmental parameters."""
-    temperature_C: float
-    pH: float
-    chloride_ppm: float
+class ElectrochemicalParameters:
+    """Electrochemical corrosion parameters."""
+    E_corr_V: float
+    i_corr_A_cm2: float
+    beta_anode_V_dec: float
+    beta_cathode_V_dec: float
 
 
-class PittingCorrosion:
+class ElectrochemicalCorrosion:
     """
-    Pitting corrosion modeling.
-    """
-    
-    def __init__(self):
-        pass
-    
-    def pit_growth_rate(self, current_density_A_m2: float,
-                       molar_volume_m3_mol: float = 7.1e-6,
-                       valence: int = 2,
-                       faraday_constant: float = 96485.0) -> float:
-        """
-        Compute pit penetration rate.
-        
-        Args:
-            current_density_A_m2: Current density
-            molar_volume_m3_mol: Molar volume
-            valence: Valence electrons
-            faraday_constant: Faraday constant
-        
-        Returns:
-            Growth rate (m/s)
-        """
-        if faraday_constant <= 0 or valence <= 0:
-            return 0.0
-        return current_density_A_m2 * molar_volume_m3_mol / (valence * faraday_constant)
-    
-    def pit_depth(self, growth_rate_m_s: float,
-                 time_s: float,
-                 initiation_time_s: float = 0.0) -> float:
-        """
-        Compute pit depth.
-        
-        Args:
-            growth_rate_m_s: Growth rate
-            time_s: Time
-            initiation_time_s: Initiation time
-        
-        Returns:
-            Depth (m)
-        """
-        effective_time = max(0.0, time_s - initiation_time_s)
-        return growth_rate_m_s * effective_time
-    
-    def critical_pitting_temperature(self, cr_ppm: float,
-                                    mo_ppm: float = 0.0,
-                                    n_ppm: float = 0.0) -> float:
-        """
-        Estimate critical pitting temperature (simplified).
-        
-        Args:
-            cr_ppm: Chromium content
-            mo_ppm: Molybdenum content
-            n_ppm: Nitrogen content
-        
-        Returns:
-            CPT (C)
-        """
-        return 5.0 + 0.015 * cr_ppm + 0.05 * mo_ppm + 0.3 * n_ppm
-
-
-class GalvanicCorrosion:
-    """
-    Galvanic corrosion modeling.
+    Electrochemical corrosion analysis.
     """
     
     def __init__(self):
         pass
     
-    def galvanic_current(self, potential_difference_V: float,
-                        anode_resistance_ohm: float,
-                        cathode_resistance_ohm: float = 0.0) -> float:
+    def tafel_equation(self, E: float,
+                      E_corr: float,
+                      i_corr: float,
+                      beta: float) -> float:
         """
-        Compute galvanic current.
+        Compute Tafel current density.
         
         Args:
-            potential_difference_V: Potential difference
-            anode_resistance_ohm: Anode resistance
-            cathode_resistance_ohm: Cathode resistance
+            E: Applied potential
+            E_corr: Corrosion potential
+            i_corr: Corrosion current
+            beta: Tafel slope
         
         Returns:
-            Current (A)
+            Current density (A/cm^2)
         """
-        total_r = anode_resistance_ohm + cathode_resistance_ohm
-        if total_r <= 0:
-            return 0.0
-        return potential_difference_V / total_r
+        if beta <= 0:
+            return i_corr
+        overpotential = E - E_corr
+        return i_corr * 10.0 ** (overpotential / beta)
     
-    def corrosion_rate_from_current(self, current_A: float,
-                                   equivalent_weight_g: float = 27.92,
-                                   density_g_cm3: float = 7.87,
-                                   area_cm2: float = 1.0) -> float:
+    def butler_volmer(self, E: float,
+                  E_corr: float,
+                  i_corr: float,
+                  beta_a: float,
+                  beta_c: float) -> float:
         """
-        Compute corrosion rate from current (Faraday's law).
+        Compute Butler-Volmer current density.
         
         Args:
-            current_A: Current
-            equivalent_weight_g: Equivalent weight
-            density_g_cm3: Density
-            area_cm2: Area
+            E: Applied potential
+            E_corr: Corrosion potential
+            i_corr: Corrosion current
+            beta_a: Anodic Tafel slope
+            beta_c: Cathodic Tafel slope
         
         Returns:
-            Corrosion rate (mm/year)
+            Current density
         """
-        if area_cm2 <= 0 or density_g_cm3 <= 0:
-            return 0.0
-        # K = 3.27e-6 * (i * EW) / (rho * A) in mm/year
-        return 3.27e-6 * current_A * equivalent_weight_g / (density_g_cm3 * area_cm2)
+        if beta_a <= 0 or beta_c <= 0:
+            return i_corr
+        eta = E - E_corr
+        i_anodic = i_corr * math.exp(2.303 * eta / beta_a)
+        i_cathodic = i_corr * math.exp(-2.303 * eta / beta_c)
+        return i_anodic - i_cathodic
+    
+    def corrosion_potential_estimate(self, E_a: float, i_a: float,
+                                    E_c: float, i_c: float) -> float:
+        """
+        Estimate corrosion potential from intersection.
+        
+        Args:
+            E_a, i_a: Anodic point
+            E_c, i_c: Cathodic point
+        
+        Returns:
+            Estimated E_corr
+        """
+        if abs(math.log10(i_c) - math.log10(i_a)) < 1e-10:
+            return (E_a + E_c) / 2.0
+        # Linear interpolation in log scale
+        log_ratio = (math.log10(i_a) - math.log10(i_c))
+        return E_c + (E_a - E_c) * math.log10(i_c) / log_ratio
 
 
-class PassivationKinetics:
+class PolarizationCurves:
     """
-    Passivation layer growth kinetics.
+    Polarization curve analysis.
     """
     
     def __init__(self):
         pass
     
-    def oxide_thickness(self, time_s: float,
-                       growth_rate_constant_m2_s: float = 1e-12,
-                       initial_thickness_m: float = 1e-9) -> float:
+    def anodic_current(self, E: float,
+                      E_corr: float,
+                      i_corr: float,
+                      beta_a: float) -> float:
         """
-        Compute oxide thickness (parabolic growth).
+        Compute anodic branch current.
         
         Args:
-            time_s: Time
-            growth_rate_constant_m2_s: Parabolic constant
-            initial_thickness_m: Initial thickness
+            E: Potential
+            E_corr: Corrosion potential
+            i_corr: Corrosion current
+            beta_a: Anodic Tafel slope
         
         Returns:
-            Thickness (m)
+            Current density
         """
-        return math.sqrt(initial_thickness_m**2 + growth_rate_constant_m2_s * time_s)
+        if beta_a <= 0:
+            return i_corr
+        return i_corr * 10.0 ** ((E - E_corr) / beta_a)
     
-    def passivation_current(self, potential_V: float,
-                           passive_potential_V: float = 0.5,
-                           passive_current_A_m2: float = 1e-3) -> float:
+    def cathodic_current(self, E: float,
+                        E_corr: float,
+                        i_corr: float,
+                        beta_c: float) -> float:
         """
-        Compute current in passive region.
+        Compute cathodic branch current.
         
         Args:
-            potential_V: Applied potential
-            passive_potential_V: Passive potential
-            passive_current_A_m2: Passive current density
+            E: Potential
+            E_corr: Corrosion potential
+            i_corr: Corrosion current
+            beta_c: Cathodic Tafel slope
         
         Returns:
-            Current density (A/m^2)
+            Current density
         """
-        if potential_V >= passive_potential_V:
-            return passive_current_A_m2
-        return passive_current_A_m2 * math.exp(10.0 * (potential_V - passive_potential_V))
+        if beta_c <= 0:
+            return i_corr
+        return i_corr * 10.0 ** (-(E - E_corr) / beta_c)
+    
+    def polarization_resistance(self, beta_a: float,
+                               beta_c: float,
+                               i_corr: float) -> float:
+        """
+        Compute polarization resistance.
+        
+        Args:
+            beta_a: Anodic Tafel slope
+            beta_c: Cathodic Tafel slope
+            i_corr: Corrosion current
+        
+        Returns:
+            Rp (ohm*cm^2)
+        """
+        if i_corr <= 0:
+            return float('inf')
+        b = beta_a * beta_c / (2.303 * (beta_a + beta_c))
+        return b / i_corr
 
 
 class CorrosionRatePrediction:
     """
-    Overall corrosion rate prediction.
+    Corrosion rate prediction.
     """
     
     def __init__(self):
         pass
     
-    def tafel_rate(self, corrosion_current_A_m2: float,
-                  equivalent_weight_g: float = 27.92,
-                  density_g_cm3: float = 7.87) -> float:
+    def faraday_rate(self, i_corr_A_cm2: float,
+                    equivalent_weight_g_eq: float,
+                    density_g_cm3: float) -> float:
         """
-        Compute corrosion rate from Tafel analysis.
+        Compute corrosion rate via Faraday's law.
         
         Args:
-            corrosion_current_A_m2: Corrosion current density
-            equivalent_weight_g: Equivalent weight
+            i_corr_A_cm2: Corrosion current
+            equivalent_weight_g_eq: Equivalent weight
             density_g_cm3: Density
         
         Returns:
-            Corrosion rate (mm/year)
+            Rate (mm/year)
         """
-        if density_g_cm3 <= 0:
+        F = 96485.0  # Faraday constant
+        if density_g_cm3 <= 0 or F <= 0:
             return 0.0
-        return 3.27e-6 * corrosion_current_A_m2 * equivalent_weight_g / density_g_cm3
+        # mm/year = 3.27e6 * i_corr * EW / density
+        return 3.27e6 * i_corr_A_cm2 * equivalent_weight_g_eq / density_g_cm3
     
-    def lifetime_prediction(self, thickness_mm: float,
-                           corrosion_rate_mm_yr: float) -> float:
+    def penetration_rate_mpy(self, i_corr_A_cm2: float,
+                            equivalent_weight_g_eq: float,
+                            density_g_cm3: float) -> float:
         """
-        Predict time to perforation.
+        Compute penetration rate in mils per year.
         
         Args:
-            thickness_mm: Material thickness
-            corrosion_rate_mm_yr: Corrosion rate
+            i_corr_A_cm2: Corrosion current
+            equivalent_weight_g_eq: Equivalent weight
+            density_g_cm3: Density
         
         Returns:
-            Lifetime (years)
+            Rate (mpy)
+        """
+        # mpy = 0.129 * i_corr * EW / density
+        if density_g_cm3 <= 0:
+            return 0.0
+        return 0.129 * i_corr_A_cm2 * equivalent_weight_g_eq / density_g_cm3
+    
+    def time_to_failure(self, corrosion_rate_mm_yr: float,
+                       wall_thickness_mm: float) -> float:
+        """
+        Estimate time to failure.
+        
+        Args:
+            corrosion_rate_mm_yr: Rate
+            wall_thickness_mm: Wall thickness
+        
+        Returns:
+            Time (years)
         """
         if corrosion_rate_mm_yr <= 0:
             return float('inf')
-        return thickness_mm / corrosion_rate_mm_yr
+        return wall_thickness_mm / corrosion_rate_mm_yr
+
+
+class ProtectionDesign:
+    """
+    Corrosion protection design.
+    """
+    
+    def __init__(self):
+        pass
+    
+    def sacrificial_anode_mass(self, current_demand_A: float,
+                              design_life_years: float,
+                              anode_capacity_Ah_kg: float = 1200.0,
+                              utilization_factor: float = 0.85) -> float:
+        """
+        Compute sacrificial anode mass.
+        
+        Args:
+            current_demand_A: Current demand
+            design_life_years: Design life
+            anode_capacity_Ah_kg: Capacity
+            utilization_factor: Utilization
+        
+        Returns:
+            Mass (kg)
+        """
+        if anode_capacity_Ah_kg <= 0 or utilization_factor <= 0:
+            return 0.0
+        total_charge_Ah = current_demand_A * design_life_years * 8760.0
+        return total_charge_Ah / (anode_capacity_Ah_kg * utilization_factor)
+    
+    def impressed_current(self, protection_current_A: float,
+                         efficiency: float = 0.9) -> float:
+        """
+        Compute required impressed current.
+        
+        Args:
+            protection_current_A: Protection current
+            efficiency: Rectifier efficiency
+        
+        Returns:
+            Input current (A)
+        """
+        if efficiency <= 0:
+            return protection_current_A
+        return protection_current_A / efficiency
+    
+    def coating_efficiency(self, bare_rate_mm_yr: float,
+                          coated_rate_mm_yr: float) -> float:
+        """
+        Compute coating protection efficiency.
+        
+        Args:
+            bare_rate_mm_yr: Bare corrosion rate
+            coated_rate_mm_yr: Coated corrosion rate
+        
+        Returns:
+            Efficiency (%)
+        """
+        if bare_rate_mm_yr <= 0:
+            return 100.0
+        return max(0.0, (1.0 - coated_rate_mm_yr / bare_rate_mm_yr) * 100.0)
 
 
 class CorrosionModeling:
@@ -220,14 +291,14 @@ class CorrosionModeling:
     """
     
     def __init__(self):
-        self.pitting = PittingCorrosion()
-        self.galvanic = GalvanicCorrosion()
-        self.passivation = PassivationKinetics()
-        self.prediction = CorrosionRatePrediction()
+        self.electrochemical = ElectrochemicalCorrosion()
+        self.polarization = PolarizationCurves()
+        self.rate = CorrosionRatePrediction()
+        self.protection = ProtectionDesign()
     
     def corrosion_summary(self) -> Dict:
         """Get summary."""
         return {
-            "models": ["pitting", "galvanic", "passivation", "rate_prediction"],
-            "outputs": ["growth_rate", "corrosion_rate", "lifetime"]
+            "modules": ["electrochemical", "polarization", "rate", "protection"],
+            "outputs": ["current_density", "corrosion_rate", "anode_mass", "coating_efficiency"]
         }
