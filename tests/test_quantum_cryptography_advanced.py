@@ -10,8 +10,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 from quantum_cryptography_advanced import (QuantumKey, BB84Protocol,
                                            E91Protocol,
-                                           QuantumRandomNumberGenerator,
-                                           DeviceIndependentQKD,
+                                           QuantumKeyDistillation,
+                                           QuantumRandomNumberGeneration,
                                            QuantumCryptographyAdvanced)
 
 
@@ -21,24 +21,30 @@ class TestBB84Protocol(unittest.TestCase):
     def setUp(self):
         self.bb84 = BB84Protocol()
     
-    def test_bases(self):
-        """Should generate bases."""
-        b = self.bb84.generate_bases(10)
-        self.assertEqual(len(b), 10)
-        print(f"  [PASS] Bases: {len(b)}")
+    def test_prepare(self):
+        """Should prepare state."""
+        s = self.bb84.prepare_state(0, "Z")
+        self.assertEqual(s, "|0>_Z")
+        print(f"  [PASS] Prep: {s}")
+    
+    def test_measure(self):
+        """Should measure."""
+        m = self.bb84.measure_state("Z", "Z", 0)
+        self.assertEqual(m, 0)
+        print(f"  [PASS] Meas: {m}")
     
     def test_sift(self):
         """Should sift key."""
-        ab = [0, 0, 1, 1]
-        bb = [0, 1, 1, 0]
-        bits = [1, 0, 1, 0]
-        k = self.bb84.sift_key(ab, bb, bits)
-        self.assertEqual(len(k), 2)
-        print(f"  [PASS] Key: {k}")
+        bits = [0, 1, 0, 1]
+        a_bases = ["Z", "Z", "X", "X"]
+        b_bases = ["Z", "X", "X", "Z"]
+        key = self.bb84.sift_key(bits, a_bases, b_bases, bits)
+        self.assertEqual(key, [0, 0])
+        print(f"  [PASS] Key: {key}")
     
     def test_qber(self):
         """Should compute QBER."""
-        q = self.bb84.error_rate([1, 0, 1, 0], [1, 0, 0, 0])
+        q = self.bb84.quantum_bit_error_rate([0, 0, 1, 1], [0, 1, 1, 1])
         self.assertEqual(q, 0.25)
         print(f"  [PASS] QBER: {q:.2f}")
 
@@ -49,49 +55,69 @@ class TestE91Protocol(unittest.TestCase):
     def setUp(self):
         self.e91 = E91Protocol()
     
-    def test_bell(self):
-        """Should measure Bell."""
-        a, b = self.e91.bell_measurement(0, 0)
-        self.assertEqual(a, b)
-        print(f"  [PASS] Bell: ({a}, {b})")
+    def test_correlation(self):
+        """Should compute correlation."""
+        a = [0, 1, 0, 1]
+        b = [0, 1, 1, 0]
+        c = self.e91.chsh_correlation(a, b)
+        self.assertEqual(c, 0.0)
+        print(f"  [PASS] Corr: {c:.2f}")
     
     def test_chsh(self):
         """Should compute CHSH."""
-        s = self.e91.chsh_parameter([0.7, -0.7, 0.7, 0.7])
-        self.assertGreater(s, 0)
-        print(f"  [PASS] S: {s:.2f}")
+        S = self.e91.chsh_parameter([0.7, -0.7, 0.7, 0.7])
+        self.assertAlmostEqual(S, 2.8, delta=1e-6)
+        print(f"  [PASS] S: {S:.2f}")
+    
+    def test_entangle(self):
+        """Should verify entanglement."""
+        v = self.e91.entanglement_verified(2.5)
+        self.assertTrue(v)
+        print(f"  [PASS] Ent: {v}")
 
 
-class TestQuantumRandomNumberGenerator(unittest.TestCase):
+class TestQuantumKeyDistillation(unittest.TestCase):
+    """Test distillation."""
+    
+    def setUp(self):
+        self.qkd = QuantumKeyDistillation()
+    
+    def test_privacy(self):
+        """Should amplify privacy."""
+        k = self.qkd.privacy_amplification([0, 1, 0, 1])
+        self.assertGreater(len(k), 0)
+        print(f"  [PASS] Priv: {k}")
+    
+    def test_reconcile(self):
+        """Should reconcile."""
+        c1, c2 = self.qkd.error_reconciliation([0, 1, 0], [0, 1, 1])
+        self.assertEqual(c1, c2)
+        print(f"  [PASS] Rec: {c1}, {c2}")
+
+
+class TestQuantumRandomNumberGeneration(unittest.TestCase):
     """Test QRNG."""
     
     def setUp(self):
-        self.qrng = QuantumRandomNumberGenerator()
+        self.qrng = QuantumRandomNumberGeneration()
     
     def test_bits(self):
         """Should generate bits."""
-        b = self.qrng.generate_bits(8)
-        self.assertEqual(len(b), 8)
+        b = self.qrng.generate_bits(10, seed=42)
+        self.assertEqual(len(b), 10)
         print(f"  [PASS] Bits: {b}")
     
+    def test_bases(self):
+        """Should generate bases."""
+        b = self.qrng.generate_bases(10, seed=42)
+        self.assertEqual(len(b), 10)
+        print(f"  [PASS] Bases: {b}")
+    
     def test_entropy(self):
-        """Should estimate entropy."""
-        e = self.qrng.entropy_estimate([0, 1, 0, 1, 0, 1])
-        self.assertGreater(e, 0)
-        print(f"  [PASS] H: {e:.2f}")
-
-
-class TestDeviceIndependentQKD(unittest.TestCase):
-    """Test DI-QKD."""
-    
-    def setUp(self):
-        self.diqkd = DeviceIndependentQKD()
-    
-    def test_rate(self):
-        """Should compute key rate."""
-        r = self.diqkd.secure_key_rate(0.05)
-        self.assertGreater(r, 0)
-        print(f"  [PASS] Rate: {r:.4f}")
+        """Should compute entropy."""
+        e = self.qrng.entropy_estimate([0, 1, 0, 1])
+        self.assertEqual(e, 1.0)
+        print(f"  [PASS] Ent: {e:.2f}")
 
 
 class TestQuantumCryptographyAdvanced(unittest.TestCase):
@@ -102,7 +128,7 @@ class TestQuantumCryptographyAdvanced(unittest.TestCase):
     
     def test_summary(self):
         """Should summarize."""
-        s = self.qca.crypto_summary()
+        s = self.qca.qkd_summary()
         self.assertIn("protocols", s)
         print(f"  [PASS] Sum: {s}")
 

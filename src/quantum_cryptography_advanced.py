@@ -1,20 +1,19 @@
 """
 Quantum Cryptography Advanced Module
-Quantum key distribution protocols, BB84, E91,
-device-independent QKD, and quantum random number generation for autonomous quantum computing.
+BB84 protocol, E91 entanglement-based QKD,
+quantum key distillation, and quantum random number generation for autonomous quantum computing.
 """
 
 import math
-import random
 from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass
 
 
 @dataclass
 class QuantumKey:
-    """Quantum key bits."""
+    """Quantum key material."""
     bits: List[int]
-    basis: List[int]
+    basis: List[str]
 
 
 class BB84Protocol:
@@ -23,113 +22,203 @@ class BB84Protocol:
     """
     
     def __init__(self):
-        pass
+        self.bases = ["Z", "X"]
     
-    def generate_bases(self, n_bits: int) -> List[int]:
+    def prepare_state(self, bit: int, basis: str) -> str:
         """
-        Generate random bases (0=Z, 1=X).
+        Prepare quantum state.
         
         Args:
-            n_bits: Number of bits
+            bit: 0 or 1
+            basis: Z or X
         
         Returns:
-            Bases
+            State label
         """
-        return [random.randint(0, 1) for _ in range(n_bits)]
+        return f"|{bit}>_{basis}"
     
-    def generate_bits(self, n_bits: int) -> List[int]:
+    def measure_state(self, sent_basis: str,
+                     received_basis: str,
+                     bit: int) -> int:
         """
-        Generate random bits.
+        Measure state in chosen basis.
         
         Args:
-            n_bits: Number of bits
+            sent_basis: Sender basis
+            received_basis: Receiver basis
+            bit: Sent bit
         
         Returns:
-            Bits
+            Measured bit
         """
-        return [random.randint(0, 1) for _ in range(n_bits)]
+        if sent_basis == received_basis:
+            return bit
+        # Random outcome if bases differ
+        import random
+        return random.randint(0, 1)
     
-    def sift_key(self, alice_bases: List[int],
-                bob_bases: List[int],
-                alice_bits: List[int]) -> List[int]:
+    def sift_key(self, alice_bits: List[int],
+                alice_bases: List[str],
+                bob_bases: List[str],
+                bob_bits: List[int]) -> List[int]:
         """
-        Sift key by matching bases.
+        Sift matching basis key.
         
         Args:
-            alice_bases: Alice's bases
-            bob_bases: Bob's bases
-            alice_bits: Alice's bits
+            alice_bits: Alice bits
+            alice_bases: Alice bases
+            bob_bases: Bob bases
+            bob_bits: Bob bits
         
         Returns:
             Sifted key
         """
         key = []
-        for a_b, b_b, bit in zip(alice_bases, bob_bases, alice_bits):
-            if a_b == b_b:
-                key.append(bit)
+        for i in range(min(len(alice_bases), len(bob_bases))):
+            if alice_bases[i] == bob_bases[i]:
+                key.append(alice_bits[i])
         return key
     
-    def error_rate(self, alice_key: List[int],
-                  bob_key: List[int]) -> float:
+    def quantum_bit_error_rate(self, key1: List[int],
+                              key2: List[int]) -> float:
         """
-        Compute quantum bit error rate.
+        Compute QBER.
         
         Args:
-            alice_key: Alice's sifted key
-            bob_key: Bob's sifted key
+            key1: Key 1
+            key2: Key 2
         
         Returns:
             QBER
         """
-        if not alice_key or len(alice_key) != len(bob_key):
+        n = min(len(key1), len(key2))
+        if n == 0:
             return 0.0
-        errors = sum(1 for a, b in zip(alice_key, bob_key) if a != b)
-        return errors / len(alice_key)
+        errors = sum(1 for i in range(n) if key1[i] != key2[i])
+        return errors / n
 
 
 class E91Protocol:
     """
-    Ekert91 entanglement-based QKD.
+    E91 entanglement-based QKD protocol.
     """
     
     def __init__(self):
         pass
     
-    def bell_measurement(self, basis_a: int,
-                        basis_b: int) -> Tuple[int, int]:
+    def chsh_correlation(self, measurements_a: List[int],
+                        measurements_b: List[int]) -> float:
         """
-        Simulate Bell state measurement.
+        Compute CHSH correlation.
         
         Args:
-            basis_a: Alice's basis
-            basis_b: Bob's basis
+            measurements_a: Alice measurements
+            measurements_b: Bob measurements
         
         Returns:
-            (outcome_a, outcome_b)
+            Correlation
         """
-        # Simplified: correlated outcomes
-        bit = random.randint(0, 1)
-        if basis_a == basis_b:
-            return bit, bit
-        return bit, random.randint(0, 1)
+        n = min(len(measurements_a), len(measurements_b))
+        if n == 0:
+            return 0.0
+        same = sum(1 for i in range(n) if measurements_a[i] == measurements_b[i])
+        diff = n - same
+        return (same - diff) / n
     
     def chsh_parameter(self, correlations: List[float]) -> float:
         """
-        Compute CHSH parameter for eavesdropper detection.
+        Compute CHSH parameter S.
         
         Args:
-            correlations: Correlation values
+            correlations: Four correlations
         
         Returns:
             S parameter
         """
         if len(correlations) < 4:
             return 0.0
-        S = abs(correlations[0] - correlations[1] + correlations[2] + correlations[3])
-        return S
+        return abs(correlations[0] - correlations[1] + correlations[2] + correlations[3])
+    
+    def entanglement_verified(self, S: float,
+                             threshold: float = 2.0) -> bool:
+        """
+        Check if entanglement is verified.
+        
+        Args:
+            S: CHSH parameter
+            threshold: Bell threshold
+        
+        Returns:
+            True if entangled
+        """
+        return S > threshold
 
 
-class QuantumRandomNumberGenerator:
+class QuantumKeyDistillation:
+    """
+    Post-processing for quantum keys.
+    """
+    
+    def __init__(self):
+        pass
+    
+    def privacy_amplification(self, key: List[int],
+                             seed: int = 42) -> List[int]:
+        """
+        Simple privacy amplification.
+        
+        Args:
+            key: Raw key
+            seed: Random seed
+        
+        Returns:
+            Distilled key
+        """
+        if not key:
+            return []
+        import random
+        rng = random.Random(seed)
+        # XOR pairs
+        distilled = []
+        for i in range(0, len(key) - 1, 2):
+            distilled.append(key[i] ^ key[i+1])
+        if len(key) % 2 == 1:
+            distilled.append(key[-1] ^ (rng.randint(0, 1)))
+        return distilled
+    
+    def error_reconciliation(self, key1: List[int],
+                            key2: List[int],
+                            parity_bits: int = 3) -> Tuple[List[int], List[int]]:
+        """
+        Simple error reconciliation.
+        
+        Args:
+            key1: Key 1
+            key2: Key 2
+            parity_bits: Block size
+        
+        Returns:
+            (corrected1, corrected2)
+        """
+        if not key1 or not key2:
+            return (key1, key2)
+        corrected1 = list(key1)
+        corrected2 = list(key2)
+        # Flip mismatched bits in blocks
+        for i in range(0, min(len(corrected1), len(corrected2)), parity_bits):
+            block_end = min(i + parity_bits, len(corrected1), len(corrected2))
+            p1 = sum(corrected1[j] for j in range(i, block_end)) % 2
+            p2 = sum(corrected2[j] for j in range(i, block_end)) % 2
+            if p1 != p2:
+                # Find and correct first mismatch
+                for j in range(i, block_end):
+                    if corrected1[j] != corrected2[j]:
+                        corrected2[j] = corrected1[j]
+                        break
+        return (corrected1, corrected2)
+
+
+class QuantumRandomNumberGeneration:
     """
     Quantum random number generation.
     """
@@ -137,17 +226,37 @@ class QuantumRandomNumberGenerator:
     def __init__(self):
         pass
     
-    def generate_bits(self, n_bits: int) -> List[int]:
+    def generate_bits(self, n: int,
+                     seed: Optional[int] = None) -> List[int]:
         """
-        Generate quantum random bits.
+        Generate random bits.
         
         Args:
-            n_bits: Number of bits
+            n: Number of bits
+            seed: Optional seed
         
         Returns:
             Random bits
         """
-        return [random.randint(0, 1) for _ in range(n_bits)]
+        import random
+        rng = random.Random(seed)
+        return [rng.randint(0, 1) for _ in range(n)]
+    
+    def generate_bases(self, n: int,
+                      seed: Optional[int] = None) -> List[str]:
+        """
+        Generate random bases.
+        
+        Args:
+            n: Number of bases
+            seed: Optional seed
+        
+        Returns:
+            Random bases (Z or X)
+        """
+        import random
+        rng = random.Random(seed)
+        return ["Z" if rng.random() < 0.5 else "X" for _ in range(n)]
     
     def entropy_estimate(self, bits: List[int]) -> float:
         """
@@ -157,57 +266,35 @@ class QuantumRandomNumberGenerator:
             bits: Bit sequence
         
         Returns:
-            Entropy in bits
+            Entropy per bit
         """
         if not bits:
             return 0.0
-        p0 = sum(1 for b in bits if b == 0) / len(bits)
-        p1 = 1.0 - p0
-        if p0 == 0 or p1 == 0:
-            return 0.0
-        return -(p0 * math.log2(p0) + p1 * math.log2(p1))
-
-
-class DeviceIndependentQKD:
-    """
-    Device-independent QKD security analysis.
-    """
-    
-    def __init__(self):
-        pass
-    
-    def secure_key_rate(self, qber: float,
-                       detection_efficiency: float = 0.1) -> float:
-        """
-        Estimate secure key rate.
-        
-        Args:
-            qber: Quantum bit error rate
-            detection_efficiency: Detector efficiency
-        
-        Returns:
-            Key rate (bits per detection)
-        """
-        if qber >= 0.11:  # ~11% threshold for BB84
-            return 0.0
-        h2 = lambda p: -(p * math.log2(p) + (1-p) * math.log2(1-p)) if 0 < p < 1 else 0.0
-        return max(0.0, 1.0 - 2.0 * h2(qber)) * detection_efficiency
+        n = len(bits)
+        p0 = bits.count(0) / n
+        p1 = bits.count(1) / n
+        entropy = 0.0
+        for p in [p0, p1]:
+            if p > 0:
+                entropy -= p * math.log2(p)
+        return entropy
 
 
 class QuantumCryptographyAdvanced:
     """
-    Unified advanced quantum cryptography controller.
+    Unified quantum cryptography controller.
     """
     
     def __init__(self):
         self.bb84 = BB84Protocol()
         self.e91 = E91Protocol()
-        self.qrng = QuantumRandomNumberGenerator()
-        self.diqkd = DeviceIndependentQKD()
+        self.distillation = QuantumKeyDistillation()
+        self.qrng = QuantumRandomNumberGeneration()
     
-    def crypto_summary(self) -> Dict:
+    def qkd_summary(self) -> Dict:
         """Get summary."""
         return {
-            "protocols": ["BB84", "E91", "DI-QKD"],
-            "functions": ["QKD", "QRNG", "eavesdropper_detection"]
+            "protocols": ["bb84", "e91"],
+            "tools": ["privacy_amplification", "error_reconciliation", "qrng"],
+            "applications": ["secure_communication", "randomness"]
         }
